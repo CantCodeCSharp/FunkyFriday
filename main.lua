@@ -188,6 +188,90 @@ local mainTab = makeTab("Autoplay", "eye")
 local watcherTab = makeTab("Watcher", "crosshair")
 local settingsTab = makeTab("Settings", "settings")
 
+-- ------------------------------------------------------------ UNIVERSAL TEXT/LABEL ADAPTER
+
+local function createTextItem(targetTab, title, initialText)
+    local item = nil
+    local combinedText = (title and (title .. "\n") or "") .. (initialText or "")
+
+    -- 1. Try CreateParagraph (legacy Rayfield)
+    if type(targetTab.CreateParagraph) == "function" then
+        local ok, res = pcall(function()
+            return targetTab:CreateParagraph({ Title = title or "Info", Content = initialText or "--" })
+        end)
+        if ok and res then item = res end
+    end
+
+    -- 2. Try CreateLabel (works across both Gen1 and Gen2)
+    if not item and type(targetTab.CreateLabel) == "function" then
+        local ok, res = pcall(function()
+            return targetTab:CreateLabel({ name = title or "Info", text = initialText or "--" })
+        end)
+        if not ok or not res then
+            ok, res = pcall(function()
+                return targetTab:CreateLabel(combinedText)
+            end)
+        end
+        if ok and res then item = res end
+    end
+
+    -- 3. Try CreateText (Gen2 specialized text element)
+    if not item and type(targetTab.CreateText) == "function" then
+        local ok, res = pcall(function()
+            return targetTab:CreateText({ name = title or "Info", text = initialText or "--" })
+        end)
+        if not ok or not res then
+            ok, res = pcall(function()
+                return targetTab:CreateText(combinedText)
+            end)
+        end
+        if ok and res then item = res end
+    end
+
+    -- 4. Fallback: CreateButton as visual read-only card
+    if not item and type(targetTab.CreateButton) == "function" then
+        local ok, res = pcall(function()
+            return targetTab:CreateButton({
+                name = (title or "Card") .. ": " .. (initialText or "--"),
+                callback = function() end,
+            })
+        end)
+        if ok and res then item = res end
+    end
+
+    local handle = {
+        raw = item,
+        title = title or "",
+        content = initialText or "--",
+    }
+
+    function handle:Set(props)
+        local newTitle = (type(props) == "table" and (props.Title or props.title)) or self.title
+        local newContent = (type(props) == "table" and (props.Content or props.content)) or (type(props) == "string" and props) or self.content
+
+        self.title = newTitle
+        self.content = newContent
+
+        if not self.raw then return end
+        local fullText = (self.title ~= "" and (self.title .. "\n") or "") .. self.content
+
+        if type(self.raw.Set) == "function" then
+            pcall(function()
+                self.raw:Set({ Title = self.title, Content = self.content, title = self.title, content = self.content })
+            end)
+            pcall(function()
+                self.raw:Set(fullText)
+            end)
+        elseif type(self.raw.set) == "function" then
+            pcall(function()
+                self.raw:set(fullText)
+            end)
+        end
+    end
+
+    return handle
+end
+
 -- ------------------------------------------------------------ RUN STATE & TOKENS
 
 local Tune = {
@@ -393,7 +477,6 @@ local function injectActor()
         local lastStrainUpdateTime = 0
 
         -- Watcher Runtime Telemetry State
-        local watcherActive = true
         local currentPeakNPS = 0
         local lastComputedRollingNPS = 0
         local currentSpam = false
@@ -685,9 +768,7 @@ local function injectActor()
             end
         end
 
-        -- ------------------------------------------------------------
-        -- STATIC CHART DIFFICULTY & INTERVAL ANALYZER (WATCHER)
-        -- ------------------------------------------------------------
+        -- Static Chart Difficulty & Gap Analyzer
         local function analyzeChart(field, sideName)
             if not field or type(field.NoteCache) ~= "table" then return nil end
 
@@ -754,7 +835,6 @@ local function injectActor()
 
                     local localNps = 1000.0 / dtMs
 
-                    -- Difficulty categorization based on density & gap
                     if localNps < 4 or dtMs > 250 then
                         counts.Normal = counts.Normal + 1
                     elseif localNps <= 7 or dtMs > 142 then
@@ -781,7 +861,6 @@ local function injectActor()
             local pctLunatic = (counts.Lunatic / validIntervals) * 100
             local pctImpossible = (counts.Impossible / validIntervals) * 100
 
-            -- Determine highest weighted primary tier
             local primary = "NORMAL"
             local maxP = pctNormal
             if pctHard > maxP then maxP = pctHard; primary = "HARD" end
@@ -926,7 +1005,7 @@ local function injectActor()
             end
 
             -- ------------------------------------------------------------
-            -- DAS v4 & DMBOD & TELEMETRY EVALUATION
+            -- DAS v4 & DMBOD & WATCHER TELEMETRY
             -- ------------------------------------------------------------
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.22 then
                 local targetLaneIdx = laneFromValue(rawLane, 10)
@@ -981,7 +1060,6 @@ local function injectActor()
                     accumulatedStrain = math_clamp(accumulatedStrain + (densityOverhead * 0.12), 0.0, 1.0)
                 end
 
-                -- Fatigue state
                 if accumulatedStrain >= 0.85 then
                     currentComfort = "OVERLOAD"
                 elseif effectiveNPS > comfortNps then
@@ -1169,7 +1247,7 @@ local function injectActor()
                 local playback = gameObj.AdjustedPlayback or 1
                 if playback == 0 then playback = 1 end
 
-                -- Reset on chart change or song seek
+                -- Reset on chart change or seek
                 if lastField ~= field or lastGame ~= gameObj or (tpV and (timepos < tpV - 1.0 or timepos > tpV + 5.0)) then
                     lastField, lastGame, lastNoteCache = field, gameObj, field.NoteCache
                     laneCount, maxLane, zeroBased = 4, 0, false
@@ -1266,7 +1344,6 @@ local function injectActor()
                     if observed > laneCount and observed <= 9 then laneCount = observed end
                 end
 
-                -- Playback hits if Autoplay is active
                 if attr.ap and lastV and (nowS - lastV) <= 2 then
                     if scan.n > 1 then
                         sortPool(scan)
@@ -1279,7 +1356,7 @@ local function injectActor()
                     end
                 end
 
-                -- Synchronize real-time telemetry back to attributes (throttled at 10 Hz)
+                -- Telemetry sync at 10 Hz
                 if attr.watcherActive and nowS >= nextTelemetrySyncAt then
                     nextTelemetrySyncAt = nowS + 0.10
                     pcall(function()
@@ -1633,7 +1710,7 @@ uiElements.mechanicInterval = mainTab:CreateSlider({
     end,
 })
 
--- 2. WATCHER TAB
+-- 2. WATCHER TAB (ADAPTIVE TEXT / LABEL CARDS)
 watcherTab:CreateSection({ name = "WATCHER CONTROLS", icon = "eye" })
 
 local watcherLabels = {}
@@ -1707,24 +1784,27 @@ watcherTab:CreateButton({
 
 watcherTab:CreateSection({ name = "CHART METRICS & AVERAGES", icon = "crosshair" })
 
-watcherLabels.chartOverview = watcherTab:CreateParagraph({
-    Title = "Chart Overview",
-    Content = "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
-})
+watcherLabels.chartOverview = createTextItem(
+    watcherTab,
+    "Chart Overview",
+    "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --"
+)
 
 watcherTab:CreateSection({ name = "DIFFICULTY BREAKDOWN", icon = "palette" })
 
-watcherLabels.difficultyBreakdown = watcherTab:CreateParagraph({
-    Title = "Difficulty Profile",
-    Content = "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%",
-})
+watcherLabels.difficultyBreakdown = createTextItem(
+    watcherTab,
+    "Difficulty Profile",
+    "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%"
+)
 
 watcherTab:CreateSection({ name = "ENGINE DIAGNOSTICS (DAS & DMBOD)", icon = "settings" })
 
-watcherLabels.diagnostics = watcherTab:CreateParagraph({
-    Title = "Real-Time Engine Diagnostics",
-    Content = "Density Status: --\nFatigue / Comfort: --\nDynamic Miss Rate: --%\nDAS Activations: --\nDMBOD Triggers: --",
-})
+watcherLabels.diagnostics = createTextItem(
+    watcherTab,
+    "Real-Time Engine Diagnostics",
+    "Density Status: --\nFatigue / Comfort: --\nDynamic Miss Rate: --%\nDAS Activations: --\nDMBOD Triggers: --"
+)
 
 -- UI Telemetry Sync Loop
 task.spawn(function()
