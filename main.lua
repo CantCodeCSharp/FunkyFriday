@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized, DAS v3 & Gated DMBOD)
+-- Yvetzal: Funky Friday Autoplay (Optimized DAS v4 & Adaptive DMBOD)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -37,12 +37,14 @@ local DefaultConfig = {
     missPct = 0, -- Base miss stays 0; DMBOD handles dynamic misses
     missCooldown = 4.0,
     sickMaxOffsetMs = 18,
-    -- Dynamic Accuracy Scaling (DAS v3)
+    -- Dynamic Accuracy Scaling (DAS v4)
     dynamicAccuracy = true,
     denseThresholdMs = 45,
     sparseThresholdMs = 240,
+    comfortNps = 7,
+    hardNps = 14,
     strainPenaltyPct = 40,
-    -- Dynamic Missing Based on Difficulty (DMBOD v3)
+    -- Dynamic Missing Based on Difficulty (DMBOD v4)
     dmbod = true,
     dmbodMaxMissPct = 5,
 }
@@ -293,6 +295,8 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
         localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
         localPlayer:SetAttribute("GCSparseMs", State.sparseThresholdMs)
+        localPlayer:SetAttribute("GCComfortNps", State.comfortNps)
+        localPlayer:SetAttribute("GCHardNps", State.hardNps)
         localPlayer:SetAttribute("GCPenaltyPct", State.strainPenaltyPct)
         -- Dynamic Missing Based on Difficulty (DMBOD)
         localPlayer:SetAttribute("GCCDmbod", State.dmbod)
@@ -356,7 +360,7 @@ local function injectActor()
         local cachedPendulumPivot
         local nextPendulumRefresh = 0
 
-        -- Accuracy Distribution Cache
+        -- Accuracy Distribution Weights Cache
         local cumSick = 92
         local cumGood = 98
         local cumOk = 100
@@ -365,19 +369,20 @@ local function injectActor()
         local nextMissAllowedAt = 0
 
         -- ------------------------------------------------------------
-        -- REFACTORED DAS v3 & DMBOD STATE ENGINE (ZERO-ALLOCATION)
+        -- ZERO-ALLOCATION CONTINUOUS DIFFICULTY & NPS ENGINE
         -- ------------------------------------------------------------
         local lastGlobalNoteTime = 0
+        local lastDistinctNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
-        -- Rolling Density / NPS Ring Buffer (Window: 1.5 seconds)
-        local NPS_WINDOW = 1.5
-        local RING_SIZE = 64
+        -- Monotonic NPS Ring Buffer (Song-Time window: 1.25s)
+        local NPS_WINDOW = 1.25
+        local RING_SIZE = 128
         local npsRing = table.create(RING_SIZE, 0)
         local ringHead = 1
         local ringCount = 0
 
-        -- Continuous Strain & Fatigue Tracking
+        -- Smooth Strain & Fatigue State
         local accumulatedStrain = 0
         local lastStrainUpdateTime = 0
 
@@ -400,6 +405,8 @@ local function injectActor()
             dynAcc = LP:GetAttribute("GCCDynAcc") ~= false,
             denseMs = tonumber(LP:GetAttribute("GCDenseMs")) or 45,
             sparseMs = tonumber(LP:GetAttribute("GCSparseMs")) or 240,
+            comfortNps = tonumber(LP:GetAttribute("GCComfortNps")) or 7,
+            hardNps = tonumber(LP:GetAttribute("GCHardNps")) or 14,
             penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 40,
             dmbod = LP:GetAttribute("GCCDmbod") ~= false,
             dmbodMaxMiss = tonumber(LP:GetAttribute("GCDmbodMaxMiss")) or 5,
@@ -407,11 +414,11 @@ local function injectActor()
         }
 
         local function recalculateWeights()
-            local s = attr.sickPct
-            local g = attr.goodPct
-            local o = attr.okPct
-            local b = attr.badPct
-            local m = attr.missPct
+            local s = math_max(0, attr.sickPct)
+            local g = math_max(0, attr.goodPct)
+            local o = math_max(0, attr.okPct)
+            local b = math_max(0, attr.badPct)
+            local m = math_max(0, attr.missPct)
             cumSick = s
             cumGood = cumSick + g
             cumOk = cumGood + o
@@ -460,6 +467,8 @@ local function injectActor()
         trackAttr("GCCDynAcc", function(v) attr.dynAcc = v ~= false end)
         trackAttr("GCDenseMs", function(v) attr.denseMs = tonumber(v) or 45 end)
         trackAttr("GCSparseMs", function(v) attr.sparseMs = tonumber(v) or 240 end)
+        trackAttr("GCComfortNps", function(v) attr.comfortNps = tonumber(v) or 7 end)
+        trackAttr("GCHardNps", function(v) attr.hardNps = tonumber(v) or 14 end)
         trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 40 end)
         trackAttr("GCCDmbod", function(v) attr.dmbod = v ~= false end)
         trackAttr("GCDmbodMaxMiss", function(v) attr.dmbodMaxMiss = tonumber(v) or 5 end)
@@ -565,7 +574,7 @@ local function injectActor()
             return noteTime - songTime
         end
 
-        -- Human-like Gaussian offset generator (Irwin-Hall n=3, Mean = 0.0ms)
+        -- Irwin-Hall Gaussian generator (n=3, zero-mean)
         local function gaussianOffset(maxWindowSec)
             local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
             local offset = z * (maxWindowSec * 0.33)
@@ -752,24 +761,37 @@ local function injectActor()
             if not rawTime then return end
             local nTime = (rawTime > 1000 and scan.timepos < 500) and (rawTime * 0.001) or rawTime
 
+            local diff = normDiff(nTime, scan.timepos)
+            if not diff then return end
+            diff = diff / scan.playback
+
+            -- Expired or missed notes cleanup
+            if diff < -0.25 then
+                arrow._bybyHit = true
+                return
+            end
+
+            if diff > -0.5 then
+                scan.pending = scan.pending + 1
+            end
+
             -- ------------------------------------------------------------
-            -- REFACTORED DAS v3 & GATED DMBOD
+            -- REFACTORED DAS v4 & BALANCED DMBOD
+            -- Evaluated exclusively when entering immediate approach window (diff <= 0.22s)
             -- ------------------------------------------------------------
-            if arrow._bybyTargetOffset == nil and not arrow._bybyMiss then
+            if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.22 then
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
-                local dtLane = (lastLaneT > 0) and math_abs(nTime - lastLaneT) or 1.0
+                local dtLane = (lastLaneT > 0) and (nTime - lastLaneT) or 1.0
 
-                -- 1. Chord & Flam Suppression (<= 12 ms delta treated as simultaneous)
-                local isChord = (lastGlobalNoteTime > 0) and (math_abs(nTime - lastGlobalNoteTime) <= 0.012)
-                
-                -- 2. Rolling NPS Calculation via Circular Buffer
-                if not isChord then
-                    npsRing[ringHead] = nTime
-                    ringHead = (ringHead % RING_SIZE) + 1
-                    if ringCount < RING_SIZE then
-                        ringCount = ringCount + 1
-                    end
+                -- 1. Chord Detection (notes within 14ms share simultaneous timing)
+                local isChord = (lastGlobalNoteTime > 0) and (math_abs(nTime - lastGlobalNoteTime) <= 0.014)
+
+                -- 2. Rolling Density & Burst NPS
+                npsRing[ringHead] = nTime
+                ringHead = (ringHead % RING_SIZE) + 1
+                if ringCount < RING_SIZE then
+                    ringCount = ringCount + 1
                 end
 
                 local activeDensityCount = 0
@@ -780,67 +802,73 @@ local function injectActor()
                         activeDensityCount = activeDensityCount + 1
                     end
                 end
-                local localNPS = activeDensityCount / NPS_WINDOW
+                local rollingNPS = activeDensityCount / NPS_WINDOW
 
-                -- 3. Exponential Strain Accumulation & Decay Model
+                local dtInter = (lastDistinctNoteTime > 0) and math_max(0.015, nTime - lastDistinctNoteTime) or 0.20
+                local burstNPS = math_clamp(1.0 / dtInter, 0.0, 35.0)
+                local effectiveNPS = math_max(rollingNPS, (rollingNPS * 0.5) + (burstNPS * 0.5))
+
+                -- 3. Exponential Strain & Fatigue Accumulator
                 if lastStrainUpdateTime > 0 then
                     local dtIdle = math_max(0, nTime - lastStrainUpdateTime)
                     if dtIdle > 0 then
-                        -- Decay rate lambda = 2.5
-                        accumulatedStrain = accumulatedStrain * math_exp(-2.5 * dtIdle)
+                        accumulatedStrain = accumulatedStrain * math_exp(-2.0 * dtIdle)
                     end
                 end
                 lastStrainUpdateTime = nTime
 
-                -- Strain only builds if density exceeds human comfort floor (> 7.0 NPS)
-                if localNPS > 7.0 and not isChord then
-                    local npsOverhead = (localNPS - 7.0)
-                    accumulatedStrain = math_clamp(accumulatedStrain + (npsOverhead * 0.08), 0.0, 1.0)
+                local comfortNps = attr.comfortNps
+                local hardNps = math_max(comfortNps + 2, attr.hardNps)
+
+                if effectiveNPS > comfortNps and not isChord then
+                    local densityOverhead = (effectiveNPS - comfortNps) / (hardNps - comfortNps)
+                    accumulatedStrain = math_clamp(accumulatedStrain + (densityOverhead * 0.12), 0.0, 1.0)
                 end
 
-                -- 4. Lane Jack Fatigue Evaluation
+                -- 4. Lane Jack Fatigue
                 local jackStrain = 0.0
-                if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.015 then
+                if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.012 then
                     jackStrain = math_clamp(1.0 - (dtLane / 0.22), 0.0, 1.0)
                 end
-                local effectiveStrain = math_clamp(accumulatedStrain + (jackStrain * 0.35), 0.0, 1.0)
 
-                -- Update timing anchors
+                -- Continuous difficulty factor [0.0 - 1.0]
+                local baseDiffFactor = math_clamp((effectiveNPS - comfortNps) / (hardNps - comfortNps), 0.0, 1.0)
+                local diffIndex = math_clamp((baseDiffFactor * 0.45) + (accumulatedStrain * 0.35) + (jackStrain * 0.20), 0.0, 1.0)
+
+                -- Update timestamps
+                lastGlobalNoteTime = nTime
                 if not isChord then
-                    lastGlobalNoteTime = nTime
+                    lastDistinctNoteTime = nTime
                 end
                 if targetLaneIdx and targetLaneIdx >= 1 and targetLaneIdx <= 10 then
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- 5. Gated DMBOD (Dynamic Missing)
+                -- 5. Dynamic Missing (DMBOD v4)
                 local currentMissPct = 0
                 if attr.dmbod then
-                    -- Absolute Gate: Hard lock to 0% misses unless BOTH conditions are met:
-                    -- (a) Sustained high rolling density (localNPS >= 9.0)
-                    -- (b) Elevated accumulated strain (effectiveStrain >= 0.35)
-                    if localNPS >= 9.0 and effectiveStrain >= 0.35 then
-                        currentMissPct = effectiveStrain * attr.dmbodMaxMiss
-                    else
-                        currentMissPct = 0
-                    end
+                    local lowDiffBaseline = math_min(0.4, attr.dmbodMaxMiss * 0.08)
+                    currentMissPct = lowDiffBaseline + ((attr.dmbodMaxMiss - lowDiffBaseline) * (diffIndex ^ 1.25))
+                    currentMissPct = math_clamp(currentMissPct, 0.0, attr.dmbodMaxMiss)
                 else
                     currentMissPct = attr.missPct
                 end
 
-                -- 6. Humanized DAS (Dynamic Accuracy Scaling)
+                -- 6. Dynamic Accuracy Scaling (DAS v4)
                 local curSick = attr.sickPct
                 local curGood = attr.goodPct
                 local curOk = attr.okPct
                 local curBad = attr.badPct
 
-                if attr.dynAcc and effectiveStrain > 0.15 then
-                    local penalty = effectiveStrain * (attr.penaltyPct * 0.01)
-                    local shaved = curSick * penalty
-                    curSick = curSick - shaved
-                    curGood = curGood + (shaved * 0.60)
-                    curOk = curOk + (shaved * 0.32)
-                    curBad = curBad + (shaved * 0.08)
+                if attr.dynAcc and diffIndex > 0.05 then
+                    local penaltyMultiplier = diffIndex * (attr.penaltyPct * 0.01)
+                    local shaved = curSick * penaltyMultiplier
+                    curSick = math_max(5, curSick - shaved)
+
+                    local highShift = diffIndex
+                    curGood = curGood + (shaved * math_clamp(0.65 - (highShift * 0.25), 0.35, 0.65))
+                    curOk = curOk + (shaved * math_clamp(0.25 + (highShift * 0.10), 0.25, 0.38))
+                    curBad = curBad + (shaved * math_clamp(0.10 + (highShift * 0.15), 0.10, 0.28))
                 end
 
                 local cSick = curSick
@@ -849,7 +877,6 @@ local function injectActor()
                 local cBad = cOk + curBad
                 local cTotal = cBad
 
-                -- Cooldown validation
                 local canMiss = (scan.nowS >= nextMissAllowedAt) and (currentMissPct > 0)
                 if canMiss then
                     cTotal = cBad + currentMissPct
@@ -860,24 +887,19 @@ local function injectActor()
                 if roll < cSick then
                     arrow._bybyTargetOffset = gaussianOffset(attr.sickMaxOffset)
                 elseif roll < cGood then
-                    local ms = math_random(24, 42)
+                    local ms = math_random(48, 76)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 elseif roll < cOk then
-                    local ms = math_random(45, 68)
+                    local ms = math_random(82, 118)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 elseif roll < cBad then
-                    local ms = math_random(72, 98)
+                    local ms = math_random(125, 150)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 else
                     arrow._bybyMiss = true
                     nextMissAllowedAt = scan.nowS + attr.missCooldown
                 end
             end
-
-            local diff = normDiff(nTime, scan.timepos)
-            if not diff then return end
-            diff = diff / scan.playback
-            if diff > -0.5 then scan.pending = scan.pending + 1 end
 
             if arrow._bybyMiss then
                 if diff < -0.25 then
@@ -888,8 +910,6 @@ local function injectActor()
 
             if shouldHit(arrow, diff, scan.dt, arrow._bybyTargetOffset) then
                 poolPush(scan, arrow, rawLane, (extractLength(arrow) or 0.03) / scan.playback)
-            elseif diff < -0.25 then
-                arrow._bybyHit = true
             end
         end
 
@@ -981,12 +1001,18 @@ local function injectActor()
                     pcall(function() LP:SetAttribute("GCCHitLane", true) end)
                 end
 
-                if lastField ~= field or lastGame ~= gameObj then
+                local timepos = gameObj.TimePosition
+                local playback = gameObj.AdjustedPlayback or 1
+                if playback == 0 then playback = 1 end
+
+                -- Reset on chart changes or playback seek/restart
+                if lastField ~= field or lastGame ~= gameObj or (tpV and (timepos < tpV - 1.0 or timepos > tpV + 5.0)) then
                     lastField, lastGame, lastNoteCache = field, gameObj, field.NoteCache
                     laneCount, maxLane, zeroBased = 4, 0, false
                     nextCountCheck = 0
                     sideBroken, sideBrokenSince = false, nil
                     lastGlobalNoteTime = 0
+                    lastDistinctNoteTime = 0
                     for l = 1, 10 do lastLaneNoteTime[l] = 0 end
                     for r = 1, RING_SIZE do npsRing[r] = 0 end
                     ringHead, ringCount = 1, 0
@@ -996,9 +1022,6 @@ local function injectActor()
                     lastNoteCache = field.NoteCache
                 end
 
-                local timepos = gameObj.TimePosition
-                local playback = gameObj.AdjustedPlayback or 1
-                if playback == 0 then playback = 1 end
                 if timepos ~= tpV then tpV, tpVAt = timepos, nowS end
 
                 scan.field = field
@@ -1211,6 +1234,32 @@ uiElements.dmbod = mainTab:CreateToggle({
     end,
 })
 
+uiElements.comfortNps = mainTab:CreateSlider({
+    name = "Comfort NPS Threshold (Low Difficulty / Floor)",
+    flag = "Yvetzal_FF_ComfortNps",
+    range = { 2, 20 },
+    value = State.comfortNps,
+    increment = 1,
+    suffix = " NPS",
+    callback = function(v)
+        State.comfortNps = v
+        syncFlags()
+    end,
+})
+
+uiElements.hardNps = mainTab:CreateSlider({
+    name = "Hard NPS Threshold (High Difficulty / Ceiling)",
+    flag = "Yvetzal_FF_HardNps",
+    range = { 8, 35 },
+    value = State.hardNps,
+    increment = 1,
+    suffix = " NPS",
+    callback = function(v)
+        State.hardNps = v
+        syncFlags()
+    end,
+})
+
 uiElements.denseThresholdMs = mainTab:CreateSlider({
     name = "Dense Threshold (Peak Burst/Spam)",
     flag = "Yvetzal_FF_DenseMs",
@@ -1394,6 +1443,8 @@ local function syncUIWithState()
         if uiElements.sideMode then uiElements.sideMode:Set(State.sideMode) end
         if uiElements.dynamicAccuracy then uiElements.dynamicAccuracy:Set(State.dynamicAccuracy) end
         if uiElements.dmbod then uiElements.dmbod:Set(State.dmbod) end
+        if uiElements.comfortNps then uiElements.comfortNps:Set(State.comfortNps) end
+        if uiElements.hardNps then uiElements.hardNps:Set(State.hardNps) end
         if uiElements.denseThresholdMs then uiElements.denseThresholdMs:Set(State.denseThresholdMs) end
         if uiElements.sparseThresholdMs then uiElements.sparseThresholdMs:Set(State.sparseThresholdMs) end
         if uiElements.dmbodMaxMissPct then uiElements.dmbodMaxMissPct:Set(State.dmbodMaxMissPct) end
@@ -1523,6 +1574,8 @@ local function cleanup()
         localPlayer:SetAttribute("GCCDynAcc", nil)
         localPlayer:SetAttribute("GCDenseMs", nil)
         localPlayer:SetAttribute("GCSparseMs", nil)
+        localPlayer:SetAttribute("GCComfortNps", nil)
+        localPlayer:SetAttribute("GCHardNps", nil)
         localPlayer:SetAttribute("GCPenaltyPct", nil)
         localPlayer:SetAttribute("GCCDmbod", nil)
         localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
@@ -1553,7 +1606,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Autoplay loaded with DAS v3 & Gated DMBOD",
+    content = "Autoplay loaded with DAS v4 & Adaptive DMBOD",
     icon = iconAsset("crosshair"),
     duration = 4,
 })
