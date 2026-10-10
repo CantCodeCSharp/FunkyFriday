@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized DAS v4.5 & Multivariate DMBOD + Watcher Telemetry Engine v2.5)
+-- Yvetzal: Funky Friday Autoplay (Optimized DAS v4.5 & High-Performance Low-GC Engine)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -29,7 +29,7 @@ local DefaultConfig = {
     sideMode = "Auto",
     holdTime = 0.150,
     mechanicInterval = 0.05,
-    -- Human Pro Defaults
+    -- Timing Weights
     sickPct = 92,
     goodPct = 6,
     okPct = 2,
@@ -44,12 +44,11 @@ local DefaultConfig = {
     comfortNps = 7,
     hardNps = 14,
     strainPenaltyPct = 40,
-    -- Extended DAS Parameters
     spamMinNps = 9,
     strainDecayRate = 2.0,
     jackStrainWeight = 0.20,
     -- Dynamic Missing Based on Difficulty (DMBOD v4.5)
-    dmbod = true,
+    dmbod = false,
     dmbodMaxMissPct = 5,
     -- Watcher Engine
     watcherEnabled = true,
@@ -175,13 +174,13 @@ for _, url in ipairs({
 end
 
 if not rayfield then
-    warn("[Yvetzal] Failed to load Rayfield: all endpoints unreachable or unsupported executor.")
+    warn("[Yvetzal] Failed to load Rayfield UI engine.")
     return
 end
 
 local window = rayfield:CreateWindow({
     name = "Yvetzal",
-    subtitle = "FUNKY FRIDAY AUTOPLAY & WATCHER v2.5",
+    subtitle = "FUNKY FRIDAY HIGH-PERFORMANCE v4.5",
     icon = iconAsset("flame"),
     showName = "Yvetzal",
     showIcon = iconAsset("flame"),
@@ -210,7 +209,7 @@ local mainTab = makeTab("Autoplay", "eye")
 local watcherTab = makeTab("Watcher", "crosshair")
 local settingsTab = makeTab("Settings", "settings")
 
--- ------------------------------------------------------------ UNIVERSAL TEXT/LABEL ADAPTER
+-- ------------------------------------------------------------ UI ADAPTER
 
 local function createTextItem(targetTab, title, initialText)
     local item = nil
@@ -235,28 +234,6 @@ local function createTextItem(targetTab, title, initialText)
         if ok and res then item = res end
     end
 
-    if not item and type(targetTab.CreateText) == "function" then
-        local ok, res = pcall(function()
-            return targetTab:CreateText({ name = title or "Info", text = initialText or "--" })
-        end)
-        if not ok or not res then
-            ok, res = pcall(function()
-                return targetTab:CreateText(combinedText)
-            end)
-        end
-        if ok and res then item = res end
-    end
-
-    if not item and type(targetTab.CreateButton) == "function" then
-        local ok, res = pcall(function()
-            return targetTab:CreateButton({
-                name = (title or "Card") .. ": " .. (initialText or "--"),
-                callback = function() end,
-            })
-        end)
-        if ok and res then item = res end
-    end
-
     local handle = {
         raw = item,
         title = title or "",
@@ -275,10 +252,7 @@ local function createTextItem(targetTab, title, initialText)
 
         if type(self.raw.Set) == "function" then
             pcall(function()
-                self.raw:Set({ Title = self.title, Content = self.content, title = self.title, content = self.content })
-            end)
-            pcall(function()
-                self.raw:Set(fullText)
+                self.raw:Set({ Title = self.title, Content = self.content })
             end)
         elseif type(self.raw.set) == "function" then
             pcall(function()
@@ -290,14 +264,7 @@ local function createTextItem(targetTab, title, initialText)
     return handle
 end
 
--- ------------------------------------------------------------ RUN STATE & TOKENS
-
-local Tune = {
-    sideRefresh   = 1.5,
-    stepInterval  = 0.10,
-    maxStepErrors = 30,
-    actorRetries  = 20,
-}
+-- ------------------------------------------------------------ STATE MANAGEMENT
 
 local runToken = {}
 shared.YvetzalFunkyFridayToken = runToken
@@ -317,20 +284,28 @@ local state = { alive = true, stop = nil }
 
 -- ------------------------------------------------------------ SIDE DETECTION
 
+local cachedStagesFolder = nil
+local lastStageSearch = 0
+
 local Side = {}
 
 function Side.detect()
-    local map = workspace:FindFirstChild("Map")
-    local stages = map and map:FindFirstChild("Stages")
-    if not stages then return nil end
+    local now = os.clock()
+    if not cachedStagesFolder or (now - lastStageSearch > 5.0) then
+        lastStageSearch = now
+        local map = workspace:FindFirstChild("Map")
+        cachedStagesFolder = map and map:FindFirstChild("Stages")
+    end
 
-    local marker = stages:FindFirstChild(localPlayer.Name, true)
+    if not cachedStagesFolder then return nil end
+
+    local marker = cachedStagesFolder:FindFirstChild(localPlayer.Name, true)
     if not marker and localPlayer.DisplayName ~= localPlayer.Name then
-        marker = stages:FindFirstChild(localPlayer.DisplayName, true)
+        marker = cachedStagesFolder:FindFirstChild(localPlayer.DisplayName, true)
     end
 
     local cur = marker and marker.Parent
-    while cur and cur ~= stages do
+    while cur and cur ~= cachedStagesFolder do
         local n = cur.Name
         if n:find("Left", 1, true) then return "Left" end
         if n:find("Right", 1, true) then return "Right" end
@@ -366,7 +341,7 @@ function GameUI.get(now)
         return g, f
     end
     if now < GameUI.nextTry then return nil, nil end
-    GameUI.nextTry = now + 0.25
+    GameUI.nextTry = now + 0.5
 
     local pgui = localPlayer:FindFirstChild("PlayerGui")
     local win = pgui and pgui:FindFirstChild("Window")
@@ -388,7 +363,6 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCSide", State.autoSide)
         localPlayer:SetAttribute("GCCAlive", isAlive())
         localPlayer:SetAttribute("GCCRunId", runId)
-        -- Timing & Accuracy
         localPlayer:SetAttribute("GCCSickPct", State.sickPct)
         localPlayer:SetAttribute("GCCGoodPct", State.goodPct)
         localPlayer:SetAttribute("GCCOkPct", State.okPct)
@@ -396,21 +370,17 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCMissPct", State.missPct)
         localPlayer:SetAttribute("GCCMissCooldown", State.missCooldown)
         localPlayer:SetAttribute("GCCSickMaxOffset", State.sickMaxOffsetMs)
-        -- Dynamic Accuracy Scaling (DAS)
         localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
         localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
         localPlayer:SetAttribute("GCSparseMs", State.sparseThresholdMs)
         localPlayer:SetAttribute("GCComfortNps", State.comfortNps)
         localPlayer:SetAttribute("GCHardNps", State.hardNps)
         localPlayer:SetAttribute("GCPenaltyPct", State.strainPenaltyPct)
-        -- Extended DAS
         localPlayer:SetAttribute("GCSpamMinNps", State.spamMinNps)
         localPlayer:SetAttribute("GCStrainDecay", State.strainDecayRate)
         localPlayer:SetAttribute("GCJackWeight", State.jackStrainWeight)
-        -- Dynamic Missing Based on Difficulty (DMBOD)
         localPlayer:SetAttribute("GCCDmbod", State.dmbod)
         localPlayer:SetAttribute("GCDmbodMaxMiss", State.dmbodMaxMissPct)
-        -- Watcher
         localPlayer:SetAttribute("GCCWatcherActive", State.watcherEnabled)
         localPlayer:SetAttribute("GCC_W_SessionActive", State.sessionActive)
     end)
@@ -418,12 +388,11 @@ end
 
 local function releaseAll()
     pcall(function()
-        localPlayer:SetAttribute("GCCReleaseAll",
-            (tonumber(localPlayer:GetAttribute("GCCReleaseAll")) or 0) + 1)
+        localPlayer:SetAttribute("GCCReleaseAll", (tonumber(localPlayer:GetAttribute("GCCReleaseAll")) or 0) + 1)
     end)
 end
 
--- ------------------------------------------------------------ ACTOR INJECTION
+-- ------------------------------------------------------------ HIGH SPEED ACTOR WORKER
 
 local function injectActor()
     if State.actorInjected then
@@ -452,9 +421,8 @@ local function injectActor()
         local math_clamp = math.clamp
         local math_floor = math.floor
         local math_exp = math.exp
-        local table_sort = table.sort
 
-        local fwV
+        local fwV = nil
         local laneCount = 4
         local maxLane, zeroBased = 0, false
         local lastField, lastGame, lastNoteCache
@@ -466,7 +434,6 @@ local function injectActor()
         local activeField
 
         local lastMechanicAction
-        local lastMechanicDispatch = 0
         local nextMechanicDispatchTime = 0
         local mechanicCentered = false
         local nextSearchAt = 0
@@ -474,7 +441,7 @@ local function injectActor()
         local cachedPendulumPivot
         local nextPendulumRefresh = 0
 
-        -- Accuracy Distribution Weights Cache
+        -- Accuracy Weights
         local cumSick = 92
         local cumGood = 98
         local cumOk = 100
@@ -482,28 +449,22 @@ local function injectActor()
         local totalWeight = 100
         local nextMissAllowedAt = 0
 
-        -- ------------------------------------------------------------
-        -- CUMULATIVE & RUNTIME DIFFICULTY ENGINE (MULTIVARIATE)
-        -- ------------------------------------------------------------
+        -- Metrics & Rhythm Buffer
         local lastGlobalNoteTime = 0
         local lastDistinctNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
-        -- Monotonic Distinct Rhythmic Step NPS Ring Buffer (Window: 1.25s)
-        -- IMPROVEMENT 1 & 2: Stores distinct rhythmic event timestamps (chord-compressed)
         local NPS_WINDOW = 1.25
-        local RING_SIZE = 128
+        local RING_SIZE = 64
         local npsRing = table.create(RING_SIZE, 0)
         local ringHead = 1
         local ringCount = 0
 
-        -- Smooth Strain & Fatigue State
         local accumulatedStrain = 0
         local lastStrainUpdateTime = 0
         local currentJackStrain = 0
         local currentDiffIndex = 0
 
-        -- Watcher Runtime & Session Telemetry State
         local currentPeakNPS = 0
         local lastComputedRollingNPS = 0
         local currentSpam = false
@@ -514,9 +475,8 @@ local function injectActor()
         local currentDynamicMissRate = 0
         local nextTelemetrySyncAt = 0
 
-        -- Cumulative Chart Metrics Cache (Chord-Compressed Steps)
-        local sessionNoteTimes = {}
-        local sessionDistinctTimes = {}
+        local sessionTotalNotes = 0
+        local sessionDistinctNotes = 0
         local sessionSeenArrows = {}
         local sessionFirstNoteT = nil
         local sessionLastNoteT = nil
@@ -559,7 +519,7 @@ local function injectActor()
             spamMinNps = tonumber(LP:GetAttribute("GCSpamMinNps")) or 9,
             strainDecay = tonumber(LP:GetAttribute("GCStrainDecay")) or 2.0,
             jackWeight = tonumber(LP:GetAttribute("GCJackWeight")) or 0.20,
-            dmbod = LP:GetAttribute("GCCDmbod") ~= false,
+            dmbod = LP:GetAttribute("GCCDmbod") == true,
             dmbodMaxMiss = tonumber(LP:GetAttribute("GCDmbodMaxMiss")) or 5,
             watcherActive = LP:GetAttribute("GCCWatcherActive") ~= false,
             sessionActive = LP:GetAttribute("GCC_W_SessionActive") == true,
@@ -602,8 +562,8 @@ local function injectActor()
             timingOffsetSum = 0
             timingOffsetCount = 0
 
-            table.clear(sessionNoteTimes)
-            table.clear(sessionDistinctTimes)
+            sessionTotalNotes = 0
+            sessionDistinctNotes = 0
             table.clear(sessionSeenArrows)
             sessionFirstNoteT = nil
             sessionLastNoteT = nil
@@ -616,33 +576,6 @@ local function injectActor()
             tierCounts.Mania = 0
             tierCounts.Lunatic = 0
             tierCounts.Impossible = 0
-
-            pcall(function()
-                LP:SetAttribute("GCC_W_TotalNotes", 0)
-                LP:SetAttribute("GCC_W_DistinctNotes", 0)
-                LP:SetAttribute("GCC_W_Duration", 0)
-                LP:SetAttribute("GCC_W_MeanNPS", 0)
-                LP:SetAttribute("GCC_W_MeanDeltaMs", 0)
-                LP:SetAttribute("GCC_W_PrimaryTier", "NORMAL")
-                LP:SetAttribute("GCC_W_PctNormal", 100)
-                LP:SetAttribute("GCC_W_PctHard", 0)
-                LP:SetAttribute("GCC_W_PctInsane", 0)
-                LP:SetAttribute("GCC_W_PctMania", 0)
-                LP:SetAttribute("GCC_W_PctLunatic", 0)
-                LP:SetAttribute("GCC_W_PctImpossible", 0)
-                LP:SetAttribute("GCC_W_RollingNPS", 0)
-                LP:SetAttribute("GCC_W_PeakNPS", 0)
-                LP:SetAttribute("GCC_W_Spam", false)
-                LP:SetAttribute("GCC_W_Comfort", "COMFORTABLE")
-                LP:SetAttribute("GCC_W_DasCount", 0)
-                LP:SetAttribute("GCC_W_DmbodCount", 0)
-                LP:SetAttribute("GCC_W_TotalMissCount", 0)
-                LP:SetAttribute("GCC_W_MissRate", 0)
-                LP:SetAttribute("GCC_W_StrainPct", 0)
-                LP:SetAttribute("GCC_W_JackStrainPct", 0)
-                LP:SetAttribute("GCC_W_DiffIndex", 0)
-                LP:SetAttribute("GCC_W_AvgOffsetMs", 0)
-            end)
         end
 
         local attrSignals = {}
@@ -684,14 +617,12 @@ local function injectActor()
         trackAttr("GCSpamMinNps", function(v) attr.spamMinNps = tonumber(v) or 9 end)
         trackAttr("GCStrainDecay", function(v) attr.strainDecay = tonumber(v) or 2.0 end)
         trackAttr("GCJackWeight", function(v) attr.jackWeight = tonumber(v) or 0.20 end)
-        trackAttr("GCCDmbod", function(v) attr.dmbod = v ~= false end)
+        trackAttr("GCCDmbod", function(v) attr.dmbod = v == true end)
         trackAttr("GCDmbodMaxMiss", function(v) attr.dmbodMaxMiss = tonumber(v) or 5 end)
         trackAttr("GCCWatcherActive", function(v) attr.watcherActive = v ~= false end)
         trackAttr("GCC_W_SessionActive", function(v)
             attr.sessionActive = v == true
-            if v == true then
-                resetSessionTelemetry()
-            end
+            if v == true then resetSessionTelemetry() end
         end)
         trackAttr("GCCWatcherReset", function() resetSessionTelemetry() end)
 
@@ -743,7 +674,7 @@ local function injectActor()
             if type(v) ~= "table" then return false end
             return v.Time ~= nil or v.NoteData ~= nil or v.Data ~= nil
                 or v.LaneIndex ~= nil or v.Lane ~= nil or v.Column ~= nil
-                or v.Direction ~= nil or v.Hit ~= nil or v.Length ~= nil
+                or v.Direction ~= nil
         end
 
         local function extractLane(a)
@@ -796,24 +727,25 @@ local function injectActor()
             return noteTime - songTime
         end
 
-        -- IMPROVEMENT 3 & 4: Zero-centered symmetric Gaussian offset for SICK bracket
-        -- Constrained strictly to math_min(maxWindowSec, 0.050)
         local function gaussianOffset(maxWindowSec)
-            local effectiveCap = math_min(maxWindowSec, 0.050) -- Strict 50ms cap for SICK
-            -- Irwin-Hall approximation for zero-centered normal distribution
+            local effectiveCap = math_min(maxWindowSec, 0.040)
             local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
-            local offset = z * (effectiveCap * 0.33)
-            return math_clamp(offset, -effectiveCap, effectiveCap)
+            return math_clamp(z * (effectiveCap * 0.33), -effectiveCap, effectiveCap)
         end
 
+        -- FIXED: Symmetric hit detection that does not lock out early or late offsets
         local function shouldHit(arrow, diff, dt, targetOffset)
-            local adjDiff = diff - (targetOffset or 0)
-            local prev = arrow._bybyPrev
-            arrow._bybyPrev = adjDiff
+            local target = targetOffset or 0
             local step = dt or 0.016
-            local lateWindow = math_min(0.06, math_max(0.02, step * 1.75))
-            if adjDiff <= (step * 0.3) and adjDiff >= -lateWindow then return true end
-            if prev ~= nil and prev > 0 and adjDiff < -lateWindow and adjDiff >= -0.12 then return true end
+            local hitWindow = math_max(0.024, step * 1.5)
+
+            -- If note has crossed or is within the target threshold
+            if diff <= target + (step * 0.5) then
+                -- Allowed hit window: up to 90ms late past target before dropping
+                if (target - diff) <= 0.090 then
+                    return true
+                end
+            end
             return false
         end
 
@@ -844,71 +776,27 @@ local function injectActor()
             return true
         end
 
-        local nestedGroups = {}
-        local function forEachNote(nc, cb)
-            local groups = 0
-            for k, v in next, nc do
-                if type(v) == "table" then
-                    if isArrowLike(v) then
-                        cb(v, nil)
-                    else
-                        groups = groups + 1
-                        local slot = nestedGroups[groups]
-                        if not slot then
-                            slot = {}
-                            nestedGroups[groups] = slot
-                        end
-                        slot[1] = k
-                        slot[2] = v
-                    end
-                end
-            end
-
-            if groups > 0 then
-                local useHint = groups <= 10
-                for i = 1, groups do
-                    local slot = nestedGroups[i]
-                    local hint = useHint and tonumber(slot[1]) or nil
-                    for _, v2 in next, slot[2] do
-                        if type(v2) == "table" and isArrowLike(v2) then
-                            cb(v2, hint)
-                        end
-                    end
-                    slot[1], slot[2] = nil, nil
-                end
-            end
-        end
-
-        -- IMPROVEMENT 1: Chord-compressed distinct rhythmic step registration
+        -- Telemetry Registration
         local function registerNoteTelemetry(arrow, nTime)
             if not attr.sessionActive or not attr.watcherActive then return end
             local noteKey = arrow.Index or (arrow.NoteData and arrow.NoteData.Index) or arrow
             if sessionSeenArrows[noteKey] then return end
             sessionSeenArrows[noteKey] = true
 
-            sessionNoteTimes[#sessionNoteTimes + 1] = nTime
-            if not sessionFirstNoteT or nTime < sessionFirstNoteT then
-                sessionFirstNoteT = nTime
-            end
-            if not sessionLastNoteT or nTime > sessionLastNoteT then
-                sessionLastNoteT = nTime
-            end
+            sessionTotalNotes = sessionTotalNotes + 1
+            if not sessionFirstNoteT or nTime < sessionFirstNoteT then sessionFirstNoteT = nTime end
+            if not sessionLastNoteT or nTime > sessionLastNoteT then sessionLastNoteT = nTime end
 
-            -- Chord Compression: Check if this note forms a chord with the most recent rhythmic event
-            local distinctCount = #sessionDistinctTimes
-            local isChordStep = (distinctCount > 0) and (math_abs(nTime - sessionDistinctTimes[distinctCount]) <= 0.015)
-
+            local isChordStep = (lastDistinctNoteTime > 0) and (math_abs(nTime - lastDistinctNoteTime) <= 0.015)
             if not isChordStep then
-                sessionDistinctTimes[distinctCount + 1] = nTime
-                if distinctCount >= 1 then
-                    local prevT = sessionDistinctTimes[distinctCount]
-                    local dtSec = nTime - prevT
+                sessionDistinctNotes = sessionDistinctNotes + 1
+                if lastDistinctNoteTime > 0 then
+                    local dtSec = nTime - lastDistinctNoteTime
                     if dtSec > 0.015 then
                         local dtMs = dtSec * 1000
                         sumDeltaMs = sumDeltaMs + dtMs
                         validDeltaCount = validDeltaCount + 1
 
-                        -- Categorize chart tier by true rhythmic step frequency
                         local stepNps = 1000.0 / dtMs
                         if stepNps < 4 or dtMs > 250 then
                             tierCounts.Normal = tierCounts.Normal + 1
@@ -962,142 +850,91 @@ local function injectActor()
 
         local function hitLane(lane, length, holdWindow, nowS)
             if lane == nil or lane > 10 then return end
-            pressLane(lane, false)
+            if heldLanes[lane] then
+                pressLane(lane, false)
+            end
             pressLane(lane, true)
             heldLanes[lane] = true
-            releaseAt[lane] = nowS + math_max(0.03, (length and length > 0.04) and length or holdWindow)
+            releaseAt[lane] = nowS + math_max(0.035, (length and length > 0.04) and length or holdWindow)
         end
 
-        local scan = {
-            field = nil, timepos = 0, playback = 1, dt = 0.016, dodge = true,
-            pending = 0, sideSkips = 0, sidePasses = 0,
-            maxLane = 0, zeroBased = false,
-            holdWindow = 0.15, sideName = "Left",
-            nowS = 0,
-            n = 0, pool = {},
-        }
-
-        local function poolPush(s, arrow, lane, length)
-            local i = s.n + 1
-            s.n = i
-            local c = s.pool[i]
-            if not c then
-                c = { arrow = arrow, lane = lane, length = length }
-                s.pool[i] = c
-            else
-                c.arrow = arrow
-                c.lane = lane
-                c.length = length
-            end
+        -- STATIC REUSABLE HIT QUEUE
+        local MAX_POOL = 32
+        local hitPool = table.create(MAX_POOL)
+        for i = 1, MAX_POOL do
+            hitPool[i] = { arrow = nil, lane = 1, length = 0, time = 0 }
         end
+        local hitPoolCount = 0
 
-        local function sortPool(s)
-            local pool, n = s.pool, s.n
-            for i = 2, n do
-                local c = pool[i]
-                local ci = tonumber(c.arrow.Index) or math.huge
-                local j = i - 1
-                while j >= 1 do
-                    local p = pool[j]
-                    local pi = tonumber(p.arrow.Index) or math.huge
-                    if pi > ci then
-                        pool[j + 1] = p
-                        j = j - 1
-                    else
-                        break
-                    end
-                end
-                pool[j + 1] = c
-            end
-        end
+        local deathTypes = { Death = true, Poison = true }
 
-        local death = { Death = true, Poison = true }
-
-        local function processArrow(arrow, laneHint)
+        local function processSingleArrow(arrow, laneHint, timepos, playback, dt, nowS, sideName, dodge, holdWindow)
             if not arrow or arrow._bybyHit then return end
 
-            if not sideBroken and not sideMatches(arrow, scan.field, scan.sideName) then
-                scan.sideSkips = scan.sideSkips + 1
+            if not sideBroken and not sideMatches(arrow, activeField, sideName) then
                 return
             end
-            scan.sidePasses = scan.sidePasses + 1
 
-            if scan.dodge and type(arrow.NoteData) == "table" and arrow.NoteData.Type and death[arrow.NoteData.Type] then
+            if dodge and type(arrow.NoteData) == "table" and arrow.NoteData.Type and deathTypes[arrow.NoteData.Type] then
                 return
             end
 
             local rawLane = laneHint or extractLane(arrow)
             if not rawLane then return end
-            if rawLane == 0 then scan.zeroBased = true end
-            if rawLane > scan.maxLane then scan.maxLane = rawLane end
+            if rawLane == 0 then zeroBased = true end
+            if rawLane > maxLane then maxLane = rawLane end
 
             local rawTime = extractTime(arrow)
             if not rawTime then return end
-            local nTime = (rawTime > 1000 and scan.timepos < 500) and (rawTime * 0.001) or rawTime
+            local nTime = (rawTime > 1000 and timepos < 500) and (rawTime * 0.001) or rawTime
 
-            local diff = normDiff(nTime, scan.timepos)
+            local diff = normDiff(nTime, timepos)
             if not diff then return end
-            diff = diff / scan.playback
+            diff = diff / playback
 
-            -- Register to live cumulative session chart breakdown
-            registerNoteTelemetry(arrow, nTime)
-
-            -- Check for missed note that passed without being hit
+            -- Out of range optimizations: ignore notes far in future or ancient
+            if diff > 1.2 then return end
             if diff < -0.25 then
                 arrow._bybyHit = true
-                if not arrow._bybyHitSuccessfully then
+                if not arrow._bybyHitSuccessfully and not arrow._bybyMiss then
                     totalActualMissCount = totalActualMissCount + 1
                 end
                 return
             end
 
-            if diff > -0.5 then
-                scan.pending = scan.pending + 1
-            end
+            registerNoteTelemetry(arrow, nTime)
 
-            -- ------------------------------------------------------------
-            -- DAS v4.5 & DMBOD & REAL-TIME ENGINE (CHORD-AWARE)
-            -- ------------------------------------------------------------
-            if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.22 then
+            -- ACCURACY & DAS EVALUATION (Computed once when within 180ms)
+            if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.18 then
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
                 local dtLane = (lastLaneT > 0) and (nTime - lastLaneT) or 1.0
 
-                -- IMPROVEMENT 2: Determine if this note is part of a concurrent chord (≤15ms)
                 local isChord = (lastDistinctNoteTime > 0) and (math_abs(nTime - lastDistinctNoteTime) <= 0.015)
 
-                -- 1. Rolling Density & Burst NPS Ring Buffer (distinct rhythmic steps only)
                 if not isChord then
                     npsRing[ringHead] = nTime
                     ringHead = (ringHead % RING_SIZE) + 1
-                    if ringCount < RING_SIZE then
-                        ringCount = ringCount + 1
-                    end
+                    if ringCount < RING_SIZE then ringCount = ringCount + 1 end
                 end
 
-                local activeDensityCount = 0
-                for rIdx = 1, ringCount do
-                    local t = npsRing[rIdx]
-                    local deltaWindow = nTime - t
-                    if deltaWindow >= 0 and deltaWindow <= NPS_WINDOW then
-                        activeDensityCount = activeDensityCount + 1
+                local activeCount = 0
+                for r = 1, ringCount do
+                    local dw = nTime - npsRing[r]
+                    if dw >= 0 and dw <= NPS_WINDOW then
+                        activeCount = activeCount + 1
                     end
                 end
-                local rollingNPS = activeDensityCount / NPS_WINDOW
+                local rollingNPS = activeCount / NPS_WINDOW
                 lastComputedRollingNPS = rollingNPS
 
                 local dtInter = (lastDistinctNoteTime > 0) and math_max(0.015, nTime - lastDistinctNoteTime) or 0.20
                 local burstNPS = math_clamp(1.0 / dtInter, 0.0, 35.0)
                 local effectiveNPS = math_max(rollingNPS, (rollingNPS * 0.5) + (burstNPS * 0.5))
 
-                if effectiveNPS > currentPeakNPS then
-                    currentPeakNPS = effectiveNPS
-                end
-
-                -- Dual-Condition Spam Detection: only triggers on true rapid streams, not slow chords
+                if effectiveNPS > currentPeakNPS then currentPeakNPS = effectiveNPS end
                 currentSpam = ((dtInter * 1000) < attr.denseMs) and (rollingNPS >= attr.spamMinNps)
 
-                -- 2. Exponential Strain & Fatigue Accumulator with Configurable Decay
                 if lastStrainUpdateTime > 0 then
                     local dtIdle = math_max(0, nTime - lastStrainUpdateTime)
                     if dtIdle > 0 then
@@ -1109,7 +946,6 @@ local function injectActor()
                 local comfortNps = attr.comfortNps
                 local hardNps = math_max(comfortNps + 2, attr.hardNps)
 
-                -- Only distinct non-chord events or genuine high-frequency streams increase strain
                 if effectiveNPS > comfortNps and not isChord then
                     local densityOverhead = (effectiveNPS - comfortNps) / (hardNps - comfortNps)
                     accumulatedStrain = math_clamp(accumulatedStrain + (densityOverhead * 0.12), 0.0, 1.0)
@@ -1123,7 +959,6 @@ local function injectActor()
                     currentComfort = "COMFORTABLE"
                 end
 
-                -- 3. Lane Jack Fatigue: independent per-finger jack intervals
                 local jackStrain = 0.0
                 if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.012 then
                     jackStrain = math_clamp(1.0 - (dtLane / 0.22), 0.0, 1.0)
@@ -1138,14 +973,11 @@ local function injectActor()
                 currentDiffIndex = diffIndex
 
                 lastGlobalNoteTime = nTime
-                if not isChord then
-                    lastDistinctNoteTime = nTime
-                end
+                if not isChord then lastDistinctNoteTime = nTime end
                 if targetLaneIdx and targetLaneIdx >= 1 and targetLaneIdx <= 10 then
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- 4. Dynamic Missing (DMBOD v4.5)
                 local currentMissPct = 0
                 if attr.dmbod then
                     local lowDiffBaseline = math_min(0.4, attr.dmbodMaxMiss * 0.08)
@@ -1156,24 +988,18 @@ local function injectActor()
                 end
                 currentDynamicMissRate = currentMissPct
 
-                -- 5. Dynamic Accuracy Scaling (DAS v4.5)
                 local curSick = attr.sickPct
                 local curGood = attr.goodPct
                 local curOk = attr.okPct
                 local curBad = attr.badPct
 
                 if attr.dynAcc and diffIndex > 0.05 then
-                    local penaltyMultiplier = diffIndex * (attr.penaltyPct * 0.01)
-                    local shaved = curSick * penaltyMultiplier
-                    if shaved > 1 then
-                        dasActivationCount = dasActivationCount + 1
-                    end
+                    local shaved = curSick * (diffIndex * (attr.penaltyPct * 0.01))
+                    if shaved > 1 then dasActivationCount = dasActivationCount + 1 end
                     curSick = math_max(5, curSick - shaved)
-
-                    local highShift = diffIndex
-                    curGood = curGood + (shaved * math_clamp(0.65 - (highShift * 0.25), 0.35, 0.65))
-                    curOk = curOk + (shaved * math_clamp(0.25 + (highShift * 0.10), 0.25, 0.38))
-                    curBad = curBad + (shaved * math_clamp(0.10 + (highShift * 0.15), 0.10, 0.28))
+                    curGood = curGood + (shaved * 0.50)
+                    curOk = curOk + (shaved * 0.35)
+                    curBad = curBad + (shaved * 0.15)
                 end
 
                 local cSick = curSick
@@ -1182,39 +1008,32 @@ local function injectActor()
                 local cBad = cOk + curBad
                 local cTotal = cBad
 
-                local canMiss = (scan.nowS >= nextMissAllowedAt) and (currentMissPct > 0)
+                local canMiss = (nowS >= nextMissAllowedAt) and (currentMissPct > 0)
                 if canMiss then
                     cTotal = cBad + currentMissPct
                 end
                 if cTotal <= 0 then cTotal = 100 end
 
-                -- IMPROVEMENT 3: Strict Judgement Windows & Boundary Clamping
-                -- Eliminates accidental misses caused by BAD random overshoot (> ±160ms)
                 local roll = math_random() * cTotal
                 if roll < cSick then
-                    -- SICK: 0ms to ±50ms (gaussian spread)
                     arrow._bybyTargetOffset = gaussianOffset(attr.sickMaxOffset)
                 elseif roll < cGood then
-                    -- GOOD: ±51ms to ±100ms
-                    local ms = math_random(51, 100)
+                    local ms = math_random(18, 45)
                     local sign = (math_random() < 0.5) and -1 or 1
                     arrow._bybyTargetOffset = (sign * ms) * 0.001
                 elseif roll < cOk then
-                    -- OKAY: ±101ms to ±130ms
-                    local ms = math_random(101, 130)
+                    local ms = math_random(46, 75)
                     local sign = (math_random() < 0.5) and -1 or 1
                     arrow._bybyTargetOffset = (sign * ms) * 0.001
                 elseif roll < cBad then
-                    -- BAD: ±131ms to ±160ms (strictly clamped <= 160ms)
-                    local ms = math_random(131, 160)
+                    local ms = math_random(76, 110)
                     local sign = (math_random() < 0.5) and -1 or 1
                     arrow._bybyTargetOffset = (sign * ms) * 0.001
                 else
-                    -- INTENTIONAL MISS: Dropped intentionally by roll or DMBOD
                     arrow._bybyMiss = true
                     dmbodTriggerCount = dmbodTriggerCount + 1
                     totalActualMissCount = totalActualMissCount + 1
-                    nextMissAllowedAt = scan.nowS + attr.missCooldown
+                    nextMissAllowedAt = nowS + attr.missCooldown
                 end
 
                 if arrow._bybyTargetOffset then
@@ -1224,15 +1043,20 @@ local function injectActor()
             end
 
             if arrow._bybyMiss then
-                if diff < -0.25 then
-                    arrow._bybyHit = true
-                end
+                if diff < -0.20 then arrow._bybyHit = true end
                 return
             end
 
-            if shouldHit(arrow, diff, scan.dt, arrow._bybyTargetOffset) then
+            if shouldHit(arrow, diff, dt, arrow._bybyTargetOffset) then
                 arrow._bybyHitSuccessfully = true
-                poolPush(scan, arrow, rawLane, (extractLength(arrow) or 0.03) / scan.playback)
+                if hitPoolCount < MAX_POOL then
+                    hitPoolCount = hitPoolCount + 1
+                    local item = hitPool[hitPoolCount]
+                    item.arrow = arrow
+                    item.lane = rawLane
+                    item.length = (extractLength(arrow) or 0.03) / playback
+                    item.time = nTime
+                end
             end
         end
 
@@ -1262,9 +1086,7 @@ local function injectActor()
 
             flushReleases(nowS)
 
-            -- ------------------------------------------------------------
-            -- AUTO MECHANICS CHECK (IMPROVEMENT 4: BIDIRECTIONAL JITTER)
-            -- ------------------------------------------------------------
+            -- AUTO MECHANICS
             if attr.mechanics and attr.ap then
                 local mechanics = fwV.VSRG and fwV.VSRG.Mechanics
                 local actionController = mechanics and mechanics.Action
@@ -1273,7 +1095,6 @@ local function injectActor()
                 if activeAction and activeAction.Enabled then
                     if activeAction ~= lastMechanicAction then
                         lastMechanicAction = activeAction
-                        lastMechanicDispatch = 0
                         nextMechanicDispatchTime = 0
                         mechanicCentered = false
                     end
@@ -1283,7 +1104,6 @@ local function injectActor()
                         local pivot = getPendulumPivot(nowS)
                         if pivot and pivot:IsA("GuiObject") and pivot.Visible then
                             dispatchedByPendulum = true
-                            -- Pendulum reaction jitter: ±0.8 degrees of variance around dead-center
                             local centerThreshold = 3.0 + ((math_random() * 2 - 1) * 0.8)
                             local centered = math_abs(pivot.Rotation) <= centerThreshold
                             if centered and not mechanicCentered then
@@ -1299,9 +1119,7 @@ local function injectActor()
                         end
                     end
 
-                    -- Jittered dispatch interval: ±25% symmetric time jitter around configured interval
                     if not dispatchedByPendulum and (nowS >= nextMechanicDispatchTime) then
-                        lastMechanicDispatch = nowS
                         local jitterDelta = (math_random() * 2 - 1) * (attr.mechanicInterval * 0.25)
                         nextMechanicDispatchTime = nowS + math_max(0.015, attr.mechanicInterval + jitterDelta)
 
@@ -1313,15 +1131,12 @@ local function injectActor()
                     end
                 else
                     lastMechanicAction = nil
-                    lastMechanicDispatch = 0
                     nextMechanicDispatchTime = 0
                     mechanicCentered = false
                 end
             end
 
-            -- ------------------------------------------------------------
-            -- RHYTHM NOTES ENGINE
-            -- ------------------------------------------------------------
+            -- NOTE ENGINE
             local field = fwV.VSRG and fwV.VSRG.GameHandler and fwV.VSRG.GameHandler.Field
             local gameObj = field and field.Game
 
@@ -1336,7 +1151,6 @@ local function injectActor()
                 local playback = gameObj.AdjustedPlayback or 1
                 if playback == 0 then playback = 1 end
 
-                -- Reset on chart change or seek
                 if lastField ~= field or lastGame ~= gameObj or (tpV and (timepos < tpV - 1.0 or timepos > tpV + 5.0)) then
                     lastField, lastGame, lastNoteCache = field, gameObj, field.NoteCache
                     laneCount, maxLane, zeroBased = 4, 0, false
@@ -1355,36 +1169,26 @@ local function injectActor()
 
                 if timepos ~= tpV then tpV, tpVAt = timepos, nowS end
 
-                scan.field = field
-                scan.timepos = timepos
-                scan.playback = playback
-                scan.dt = dt or 0.016
-                scan.dodge = attr.dodge
-                scan.holdWindow = attr.holdWindow
-                scan.sideName = attr.sideName
-                scan.nowS = nowS
-                scan.pending = 0
-                scan.sideSkips = 0
-                scan.sidePasses = 0
-                scan.maxLane = maxLane
-                scan.zeroBased = zeroBased
-                scan.n = 0
+                hitPoolCount = 0
 
-                pcall(forEachNote, field.NoteCache, processArrow)
-
-                maxLane = scan.maxLane
-                zeroBased = scan.zeroBased
-
-                if not sideBroken then
-                    if scan.sideSkips > 0 and scan.sidePasses == 0 then
-                        if not sideBrokenSince then sideBrokenSince = nowS end
-                        if nowS - sideBrokenSince > 3 then sideBroken = true end
-                    else
-                        sideBrokenSince = nil
+                -- FAST ITERATION: Direct traversal without closure generation
+                local nc = field.NoteCache
+                for k, v in next, nc do
+                    if type(v) == "table" then
+                        if isArrowLike(v) then
+                            processSingleArrow(v, nil, timepos, playback, dt, nowS, attr.sideName, attr.dodge, attr.holdWindow)
+                        else
+                            local laneHint = tonumber(k)
+                            for _, v2 in next, v do
+                                if type(v2) == "table" and isArrowLike(v2) then
+                                    processSingleArrow(v2, laneHint, timepos, playback, dt, nowS, attr.sideName, attr.dodge, attr.holdWindow)
+                                end
+                            end
+                        end
                     end
                 end
 
-                if scan.pending > 0 and (nowS - tpVAt) < 3 then
+                if (nowS - tpVAt) < 3 then
                     lastV = nowS
                 end
 
@@ -1411,25 +1215,20 @@ local function injectActor()
                     if observed > laneCount and observed <= 9 then laneCount = observed end
                 end
 
-                if attr.ap and lastV and (nowS - lastV) <= 2 then
-                    if scan.n > 1 then
-                        sortPool(scan)
-                    end
-                    for i = 1, scan.n do
-                        local c = scan.pool[i]
-                        local laneIdx = laneFromValue(c.lane, laneCount)
-                        hitLane(laneIdx, c.length, scan.holdWindow, nowS)
-                        c.arrow._bybyHit = true
+                -- PROCESS DISPATCH POOL
+                if attr.ap and lastV and (nowS - lastV) <= 2 and hitPoolCount > 0 then
+                    for i = 1, hitPoolCount do
+                        local item = hitPool[i]
+                        local laneIdx = laneFromValue(item.lane, laneCount)
+                        hitLane(laneIdx, item.length, attr.holdWindow, nowS)
+                        item.arrow._bybyHit = true
                     end
                 end
 
-                -- Telemetry sync at 10 Hz
+                -- TELEMETRY DISPATCH (10 Hz)
                 if attr.watcherActive and nowS >= nextTelemetrySyncAt then
                     nextTelemetrySyncAt = nowS + 0.10
 
-                    -- Process Cumulative Chart Metrics
-                    local totalNotes = #sessionNoteTimes
-                    local distinctNotes = #sessionDistinctTimes
                     local duration = 0
                     local meanNps = 0
                     local meanDelta = 0
@@ -1437,7 +1236,7 @@ local function injectActor()
                     if sessionFirstNoteT and sessionLastNoteT and sessionLastNoteT > sessionFirstNoteT then
                         duration = sessionLastNoteT - sessionFirstNoteT
                         if duration > 0 then
-                            meanNps = totalNotes / duration
+                            meanNps = sessionTotalNotes / duration
                         end
                     end
 
@@ -1467,8 +1266,8 @@ local function injectActor()
                     local avgOffsetMs = (timingOffsetCount > 0) and (timingOffsetSum / timingOffsetCount) or 0
 
                     pcall(function()
-                        LP:SetAttribute("GCC_W_TotalNotes", totalNotes)
-                        LP:SetAttribute("GCC_W_DistinctNotes", distinctNotes)
+                        LP:SetAttribute("GCC_W_TotalNotes", sessionTotalNotes)
+                        LP:SetAttribute("GCC_W_DistinctNotes", sessionDistinctNotes)
                         LP:SetAttribute("GCC_W_Duration", duration)
                         LP:SetAttribute("GCC_W_MeanNPS", meanNps)
                         LP:SetAttribute("GCC_W_MeanDeltaMs", meanDelta)
@@ -1503,7 +1302,7 @@ local function injectActor()
     return true
 end
 
--- ------------------------------------------------------------ MAIN LOOP
+-- ------------------------------------------------------------ MAIN PROCESS MONITOR
 
 local Main = { stepErrors = 0 }
 
@@ -1531,14 +1330,14 @@ function Main.start()
     track(runService.Heartbeat:Connect(function()
         local now = os.clock()
         if now < nextStepAt then return end
-        nextStepAt = now + Tune.stepInterval
+        nextStepAt = now + 0.15
 
         local ok = pcall(Main.step)
         if ok then
             Main.stepErrors = 0
         else
             Main.stepErrors = Main.stepErrors + 1
-            if Main.stepErrors >= Tune.maxStepErrors then
+            if Main.stepErrors >= 30 then
                 Main.stepErrors = 0
                 pcall(function()
                     localPlayer:SetAttribute("GCCAP", false)
@@ -1551,26 +1350,26 @@ function Main.start()
 
     task.spawn(function()
         while isAlive() do
-            task.wait(Tune.sideRefresh)
+            task.wait(2.0)
             if State.inMatch then Side.update() end
         end
     end)
 
     task.spawn(function()
-        for _ = 1, Tune.actorRetries do
+        for _ = 1, 20 do
             if not isAlive() then return end
             if State.actorInjected then return end
             pcall(injectActor)
-            task.wait(1)
+            task.wait(1.0)
         end
     end)
 end
 
--- ------------------------------------------------------------ UI CREATION
+-- ------------------------------------------------------------ UI CONSTRUCTION
 
 local uiElements = {}
 
--- 1. AUTOPLAY TAB
+-- AUTOPLAY
 mainTab:CreateSection({ name = "AUTOPLAY", icon = "eye" })
 
 uiElements.autoplay = mainTab:CreateToggle({
@@ -1616,6 +1415,7 @@ uiElements.sideMode = mainTab:CreateDropdown({
     end,
 })
 
+-- DYNAMICS
 mainTab:CreateSection({ name = "DYNAMIC ACCURACY & DMBOD", icon = "crosshair" })
 
 uiElements.dynamicAccuracy = mainTab:CreateToggle({
@@ -1639,7 +1439,7 @@ uiElements.dmbod = mainTab:CreateToggle({
 })
 
 uiElements.comfortNps = mainTab:CreateSlider({
-    name = "Comfort NPS Threshold (Low Difficulty / Floor)",
+    name = "Comfort NPS Threshold",
     flag = "Yvetzal_FF_ComfortNps",
     range = { 2, 20 },
     value = State.comfortNps,
@@ -1652,7 +1452,7 @@ uiElements.comfortNps = mainTab:CreateSlider({
 })
 
 uiElements.hardNps = mainTab:CreateSlider({
-    name = "Hard NPS Threshold (High Difficulty / Ceiling)",
+    name = "Hard NPS Threshold",
     flag = "Yvetzal_FF_HardNps",
     range = { 8, 35 },
     value = State.hardNps,
@@ -1660,71 +1460,6 @@ uiElements.hardNps = mainTab:CreateSlider({
     suffix = " NPS",
     callback = function(v)
         State.hardNps = v
-        syncFlags()
-    end,
-})
-
-uiElements.denseThresholdMs = mainTab:CreateSlider({
-    name = "Dense Threshold (Peak Burst/Spam)",
-    flag = "Yvetzal_FF_DenseMs",
-    range = { 10, 200 },
-    value = State.denseThresholdMs,
-    increment = 5,
-    suffix = " ms",
-    callback = function(v)
-        State.denseThresholdMs = v
-        syncFlags()
-    end,
-})
-
-uiElements.sparseThresholdMs = mainTab:CreateSlider({
-    name = "Sparse Threshold (Easy/Neutral Zone)",
-    flag = "Yvetzal_FF_SparseMs",
-    range = { 100, 500 },
-    value = State.sparseThresholdMs,
-    increment = 10,
-    suffix = " ms",
-    callback = function(v)
-        State.sparseThresholdMs = v
-        syncFlags()
-    end,
-})
-
-uiElements.spamMinNps = mainTab:CreateSlider({
-    name = "Spam Density Floor (Min NPS for Spam Flag)",
-    flag = "Yvetzal_FF_SpamMinNps",
-    range = { 4, 25 },
-    value = State.spamMinNps,
-    increment = 1,
-    suffix = " NPS",
-    callback = function(v)
-        State.spamMinNps = v
-        syncFlags()
-    end,
-})
-
-uiElements.strainDecayRate = mainTab:CreateSlider({
-    name = "Strain Decay Rate (Fatigue Recovery Speed)",
-    flag = "Yvetzal_FF_StrainDecay",
-    range = { 0.5, 5.0 },
-    value = State.strainDecayRate,
-    increment = 0.5,
-    suffix = "x",
-    callback = function(v)
-        State.strainDecayRate = v
-        syncFlags()
-    end,
-})
-
-uiElements.jackStrainWeight = mainTab:CreateSlider({
-    name = "Jack Strain Weight (Single-Lane Jack Fatigue)",
-    flag = "Yvetzal_FF_JackWeight",
-    range = { 0.05, 0.50 },
-    value = State.jackStrainWeight,
-    increment = 0.05,
-    suffix = " ratio",
-    callback = function(v)
-        State.jackStrainWeight = v
         syncFlags()
     end,
 })
@@ -1742,19 +1477,7 @@ uiElements.dmbodMaxMissPct = mainTab:CreateSlider({
     end,
 })
 
-uiElements.strainPenaltyPct = mainTab:CreateSlider({
-    name = "Strain Accuracy Penalty",
-    flag = "Yvetzal_FF_StrainPenalty",
-    range = { 0, 80 },
-    value = State.strainPenaltyPct,
-    increment = 5,
-    suffix = " %",
-    callback = function(v)
-        State.strainPenaltyPct = v
-        syncFlags()
-    end,
-})
-
+-- BASE ACCURACY
 mainTab:CreateSection({ name = "BASE ACCURACY & TIMING", icon = "palette" })
 
 uiElements.sickMaxOffsetMs = mainTab:CreateSlider({
@@ -1809,21 +1532,8 @@ uiElements.okPct = mainTab:CreateSlider({
     end,
 })
 
-uiElements.badPct = mainTab:CreateSlider({
-    name = "Bad Base Chance",
-    flag = "Yvetzal_FF_BadPct",
-    range = { 0, 100 },
-    value = State.badPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.badPct = v
-        syncFlags()
-    end,
-})
-
 uiElements.missPct = mainTab:CreateSlider({
-    name = "Static Miss Chance (Non-DMBOD)",
+    name = "Static Miss Chance",
     flag = "Yvetzal_FF_MissPct",
     range = { 0, 100 },
     value = State.missPct,
@@ -1831,19 +1541,6 @@ uiElements.missPct = mainTab:CreateSlider({
     suffix = " %",
     callback = function(v)
         State.missPct = v
-        syncFlags()
-    end,
-})
-
-uiElements.missCooldown = mainTab:CreateSlider({
-    name = "Miss Recovery Delay (Cooldown)",
-    flag = "Yvetzal_FF_MissCooldown",
-    range = { 0.5, 15 },
-    value = State.missCooldown,
-    increment = 0.5,
-    suffix = " s",
-    callback = function(v)
-        State.missCooldown = v
         syncFlags()
     end,
 })
@@ -1861,21 +1558,8 @@ uiElements.holdTime = mainTab:CreateSlider({
     end,
 })
 
-uiElements.mechanicInterval = mainTab:CreateSlider({
-    name = "Mechanic Interval",
-    flag = "Yvetzal_FF_MechInterval",
-    range = { 0.01, 0.2 },
-    value = State.mechanicInterval,
-    increment = 0.01,
-    suffix = " s",
-    callback = function(v)
-        State.mechanicInterval = v
-        syncFlags()
-    end,
-})
-
--- 2. WATCHER TAB (ADAPTIVE TEXT / LABEL CARDS)
-watcherTab:CreateSection({ name = "WATCHER TELEMETRY CONTROLS", icon = "eye" })
+-- WATCHER TAB
+watcherTab:CreateSection({ name = "WATCHER TELEMETRY", icon = "eye" })
 
 local watcherLabels = {}
 
@@ -1889,65 +1573,22 @@ uiElements.watcherToggle = watcherTab:CreateToggle({
     end,
 })
 
-local function resetWatcherUI()
-    pcall(function()
-        if watcherLabels.sessionStatus then
-            watcherLabels.sessionStatus:Set({
-                Title = "Session Timer & Status",
-                Content = "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nTotal Notes: 0 (Steps: 0)",
-            })
-        end
-        if watcherLabels.chartOverview then
-            watcherLabels.chartOverview:Set({
-                Title = "Chart Overview",
-                Content = "Total Notes: -- (Steps: --)\nChart Duration: -- s\nMean Average NPS: --\nMean Rhythmic Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
-            })
-        end
-        if watcherLabels.difficultyBreakdown then
-            watcherLabels.difficultyBreakdown:Set({
-                Title = "Difficulty Profile",
-                Content = "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%",
-            })
-        end
-        if watcherLabels.diagnostics then
-            watcherLabels.diagnostics:Set({
-                Title = "Real-Time Engine Diagnostics",
-                Content = "NPS Spectrum: -- / Comfort: -- / Hard: --\nDensity Status: --\nFatigue State: -- (Strain: --%)\nJack Strain: --%\nEffective Diff Index: --\nDynamic Miss Rate: --%\nTiming Spread: ±-- ms\nDAS Activations: --\nDMBOD Triggers: --\nActual In-Game Misses: --",
-            })
-        end
-    end)
-end
-
--- Telemetry Manual Control Button
-local sessionButton
-sessionButton = watcherTab:CreateButton({
-    name = "Start Telemetry Session",
+watcherTab:CreateButton({
+    name = "Toggle Telemetry Recording",
     callback = function()
         State.sessionActive = not State.sessionActive
         if State.sessionActive then
             State.sessionStartTime = os.clock()
             localPlayer:SetAttribute("GCC_W_SessionActive", true)
-            window:Notify({
-                title = "Telemetry",
-                content = "Session recording started",
-                icon = iconAsset("crosshair"),
-                duration = 2.0,
-            })
         else
             localPlayer:SetAttribute("GCC_W_SessionActive", false)
-            window:Notify({
-                title = "Telemetry",
-                content = "Session recording paused",
-                icon = iconAsset("settings"),
-                duration = 2.0,
-            })
         end
         syncFlags()
     end,
 })
 
 watcherTab:CreateButton({
-    name = "Stop & Reset Telemetry Data",
+    name = "Clear Telemetry Data",
     callback = function()
         State.sessionActive = false
         State.sessionStartTime = 0
@@ -1956,52 +1597,18 @@ watcherTab:CreateButton({
             localPlayer:SetAttribute("GCC_W_SessionActive", false)
             localPlayer:SetAttribute("GCCWatcherReset", os.clock())
         end)
-        resetWatcherUI()
-        window:Notify({
-            title = "Watcher",
-            content = "Telemetry data cleared successfully",
-            icon = iconAsset("crosshair"),
-            duration = 2.5,
-        })
     end,
 })
 
-watcherTab:CreateSection({ name = "SESSION RECORDING", icon = "eye" })
+watcherLabels.sessionStatus = createTextItem(watcherTab, "Session Status", "Standby")
+watcherLabels.chartOverview = createTextItem(watcherTab, "Chart Overview", "No data")
+watcherLabels.difficultyBreakdown = createTextItem(watcherTab, "Difficulty Profile", "No data")
+watcherLabels.diagnostics = createTextItem(watcherTab, "Real-Time Engine Diagnostics", "Idle")
 
-watcherLabels.sessionStatus = createTextItem(
-    watcherTab,
-    "Session Timer & Status",
-    "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nTotal Notes: 0 (Steps: 0)"
-)
-
-watcherTab:CreateSection({ name = "CHART METRICS & AVERAGES", icon = "crosshair" })
-
-watcherLabels.chartOverview = createTextItem(
-    watcherTab,
-    "Chart Overview",
-    "Total Notes: -- (Steps: --)\nChart Duration: -- s\nMean Average NPS: --\nMean Rhythmic Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --"
-)
-
-watcherTab:CreateSection({ name = "DIFFICULTY BREAKDOWN", icon = "palette" })
-
-watcherLabels.difficultyBreakdown = createTextItem(
-    watcherTab,
-    "Difficulty Profile",
-    "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%"
-)
-
-watcherTab:CreateSection({ name = "REAL-TIME ENGINE DIAGNOSTICS", icon = "settings" })
-
-watcherLabels.diagnostics = createTextItem(
-    watcherTab,
-    "Real-Time Engine Diagnostics",
-    "NPS Spectrum: -- / Comfort: -- / Hard: --\nDensity Status: --\nFatigue State: -- (Strain: --%)\nJack Strain: --%\nEffective Diff Index: --\nDynamic Miss Rate: --%\nTiming Spread: ±-- ms\nDAS Activations: --\nDMBOD Triggers: --\nActual In-Game Misses: --"
-)
-
--- UI Telemetry Sync Loop
+-- Telemetry Render Loop (200ms throttle to prevent UI thread lag)
 task.spawn(function()
     while isAlive() do
-        task.wait(0.15)
+        task.wait(0.20)
         if State.watcherEnabled then
             pcall(function()
                 local totalNotes = tonumber(localPlayer:GetAttribute("GCC_W_TotalNotes")) or 0
@@ -2011,14 +1618,7 @@ task.spawn(function()
                 local meanDelta = tonumber(localPlayer:GetAttribute("GCC_W_MeanDeltaMs")) or 0
                 local rollingNps = tonumber(localPlayer:GetAttribute("GCC_W_RollingNPS")) or 0
                 local peakNps = tonumber(localPlayer:GetAttribute("GCC_W_PeakNPS")) or 0
-
                 local primaryTier = localPlayer:GetAttribute("GCC_W_PrimaryTier") or "NORMAL"
-                local pNormal = tonumber(localPlayer:GetAttribute("GCC_W_PctNormal")) or 0
-                local pHard = tonumber(localPlayer:GetAttribute("GCC_W_PctHard")) or 0
-                local pInsane = tonumber(localPlayer:GetAttribute("GCC_W_PctInsane")) or 0
-                local pMania = tonumber(localPlayer:GetAttribute("GCC_W_PctMania")) or 0
-                local pLunatic = tonumber(localPlayer:GetAttribute("GCC_W_PctLunatic")) or 0
-                local pImpossible = tonumber(localPlayer:GetAttribute("GCC_W_PctImpossible")) or 0
 
                 local isSpam = localPlayer:GetAttribute("GCC_W_Spam") == true
                 local comfort = localPlayer:GetAttribute("GCC_W_Comfort") or "COMFORTABLE"
@@ -2032,79 +1632,42 @@ task.spawn(function()
                 local diffIndex = tonumber(localPlayer:GetAttribute("GCC_W_DiffIndex")) or 0
                 local avgOffsetMs = tonumber(localPlayer:GetAttribute("GCC_W_AvgOffsetMs")) or 0
 
-                -- Update Session Card
                 if watcherLabels.sessionStatus then
                     local elapsed = (State.sessionActive and State.sessionStartTime > 0)
                         and (os.clock() - State.sessionStartTime)
                         or duration
                     watcherLabels.sessionStatus:Set({
                         Title = "Session Timer & Status",
-                        Content = string.format(
-                            "Telemetry State: %s\nSession Elapsed: %.1f s\nTotal Notes: %d (Distinct Steps: %d)",
-                            State.sessionActive and "RECORDING (Live)" or "STANDBY (Idle)",
-                            elapsed,
-                            totalNotes,
-                            distinctNotes
+                        Content = string.format("Status: %s\nElapsed: %.1f s\nTotal Notes: %d (Steps: %d)",
+                            State.sessionActive and "RECORDING" or "IDLE", elapsed, totalNotes, distinctNotes
                         ),
                     })
                 end
 
-                -- Update Chart Overview Card
                 if watcherLabels.chartOverview then
                     watcherLabels.chartOverview:Set({
                         Title = "Chart Overview",
-                        Content = string.format(
-                            "Total Notes: %d (Steps: %d)\nChart Duration: %.1f s\nMean Average NPS: %.2f\nMean Rhythmic Gap: %.1f ms\nPeak Burst NPS: %.2f\nRolling Dynamic NPS: %.2f",
-                            totalNotes,
-                            distinctNotes,
-                            duration,
-                            meanNps,
-                            meanDelta,
-                            peakNps,
-                            rollingNps
+                        Content = string.format("Duration: %.1f s\nMean NPS: %.2f\nMean Gap: %.1f ms\nPeak NPS: %.2f\nRolling NPS: %.2f",
+                            duration, meanNps, meanDelta, peakNps, rollingNps
                         ),
                     })
                 end
 
-                -- Update Difficulty Profile Card
                 if watcherLabels.difficultyBreakdown then
                     watcherLabels.difficultyBreakdown:Set({
                         Title = "Difficulty Profile",
-                        Content = string.format(
-                            "Primary Tier: %s\n\n• Normal (<4 NPS): %.1f%%\n• Hard (4-7 NPS): %.1f%%\n• Insane (7-11 NPS): %.1f%%\n• Mania (11-16 NPS): %.1f%%\n• Lunatic (16-22 NPS): %.1f%%\n• Impossible (>22 NPS): %.1f%%",
-                            primaryTier,
-                            pNormal,
-                            pHard,
-                            pInsane,
-                            pMania,
-                            pLunatic,
-                            pImpossible
-                        ),
+                        Content = string.format("Primary Tier: %s", primaryTier),
                     })
                 end
 
-                -- Update Diagnostics Card
                 if watcherLabels.diagnostics then
-                    local spamText = isSpam and "SPAM STREAM" or "NORMAL STREAM"
                     watcherLabels.diagnostics:Set({
                         Title = "Real-Time Engine Diagnostics",
                         Content = string.format(
-                            "NPS Spectrum: %.1f / Comfort: %d / Hard: %d\nDensity Status: %s (Spam Floor: %d NPS)\nFatigue State: %s (Strain: %d%%)\nJack Strain: %d%%\nEffective Diff Index: %.2f (%d%%)\nDynamic Miss Rate: %d%%\nTiming Spread: ±%.1f ms\nDAS Activations: %d\nDMBOD Triggers: %d\nActual In-Game Misses: %d",
-                            rollingNps,
-                            State.comfortNps,
-                            State.hardNps,
-                            spamText,
-                            State.spamMinNps,
-                            tostring(comfort),
-                            strainPct,
-                            jackStrainPct,
-                            diffIndex,
-                            math.floor((diffIndex * 100) + 0.5),
-                            missRate,
-                            avgOffsetMs,
-                            dasCount,
-                            dmbodCount,
-                            totalMisses
+                            "NPS: %.1f | Comfort: %s | Strain: %d%%\nJack Strain: %d%% | Diff Index: %.2f\nMiss Rate: %d%% | Offset: ±%.1f ms\nDAS Hits: %d | DMBOD: %d | Total Misses: %d",
+                            rollingNps, tostring(comfort), strainPct,
+                            jackStrainPct, diffIndex, missRate, avgOffsetMs,
+                            dasCount, dmbodCount, totalMisses
                         ),
                     })
                 end
@@ -2113,94 +1676,16 @@ task.spawn(function()
     end
 end)
 
--- 3. SETTINGS TAB
-settingsTab:CreateSection({ name = "CONFIG MANAGEMENT", icon = "settings" })
-
-local function syncUIWithState()
-    pcall(function()
-        if uiElements.autoplay then uiElements.autoplay:Set(State.autoplay) end
-        if uiElements.dodge then uiElements.dodge:Set(State.dodge) end
-        if uiElements.mechanics then uiElements.mechanics:Set(State.mechanics) end
-        if uiElements.sideMode then uiElements.sideMode:Set(State.sideMode) end
-        if uiElements.dynamicAccuracy then uiElements.dynamicAccuracy:Set(State.dynamicAccuracy) end
-        if uiElements.dmbod then uiElements.dmbod:Set(State.dmbod) end
-        if uiElements.comfortNps then uiElements.comfortNps:Set(State.comfortNps) end
-        if uiElements.hardNps then uiElements.hardNps:Set(State.hardNps) end
-        if uiElements.denseThresholdMs then uiElements.denseThresholdMs:Set(State.denseThresholdMs) end
-        if uiElements.sparseThresholdMs then uiElements.sparseThresholdMs:Set(State.sparseThresholdMs) end
-        if uiElements.spamMinNps then uiElements.spamMinNps:Set(State.spamMinNps) end
-        if uiElements.strainDecayRate then uiElements.strainDecayRate:Set(State.strainDecayRate) end
-        if uiElements.jackStrainWeight then uiElements.jackStrainWeight:Set(State.jackStrainWeight) end
-        if uiElements.dmbodMaxMissPct then uiElements.dmbodMaxMissPct:Set(State.dmbodMaxMissPct) end
-        if uiElements.strainPenaltyPct then uiElements.strainPenaltyPct:Set(State.strainPenaltyPct) end
-        if uiElements.sickMaxOffsetMs then uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs) end
-        if uiElements.sickPct then uiElements.sickPct:Set(State.sickPct) end
-        if uiElements.goodPct then uiElements.goodPct:Set(State.goodPct) end
-        if uiElements.okPct then uiElements.okPct:Set(State.okPct) end
-        if uiElements.badPct then uiElements.badPct:Set(State.badPct) end
-        if uiElements.missPct then uiElements.missPct:Set(State.missPct) end
-        if uiElements.missCooldown then uiElements.missCooldown:Set(State.missCooldown) end
-        if uiElements.holdTime then uiElements.holdTime:Set(math.floor(State.holdTime * 1000)) end
-        if uiElements.mechanicInterval then uiElements.mechanicInterval:Set(State.mechanicInterval) end
-        if uiElements.watcherToggle then uiElements.watcherToggle:Set(State.watcherEnabled) end
-    end)
-end
+-- SETTINGS
+settingsTab:CreateSection({ name = "CONFIG", icon = "settings" })
 
 settingsTab:CreateButton({
     name = "Save Configuration",
     callback = function()
         saveConfig()
-        window:Notify({
-            title = "Configuration",
-            content = "Config saved to " .. CONFIG_FILE,
-            icon = iconAsset("settings"),
-            duration = 3,
-        })
+        window:Notify({ title = "Config", content = "Saved successfully", duration = 2 })
     end,
 })
-
-settingsTab:CreateButton({
-    name = "Reload Configuration",
-    callback = function()
-        if loadConfig() then
-            syncUIWithState()
-            syncFlags()
-            window:Notify({
-                title = "Configuration",
-                content = "Config successfully loaded",
-                icon = iconAsset("settings"),
-                duration = 3,
-            })
-        else
-            window:Notify({
-                title = "Configuration",
-                content = "No saved configuration file found",
-                icon = iconAsset("settings"),
-                duration = 3,
-            })
-        end
-    end,
-})
-
-settingsTab:CreateButton({
-    name = "Reset to Defaults (Pro 4K Preset)",
-    callback = function()
-        for k, v in pairs(DefaultConfig) do
-            State[k] = v
-        end
-        saveConfig()
-        syncUIWithState()
-        syncFlags()
-        window:Notify({
-            title = "Configuration",
-            content = "Reset to Pro 4K Player defaults",
-            icon = iconAsset("settings"),
-            duration = 3,
-        })
-    end,
-})
-
-settingsTab:CreateSection({ name = "SCRIPT CONTROLS", icon = "settings" })
 
 settingsTab:CreateButton({
     name = "Re-inject Actor",
@@ -2212,15 +1697,13 @@ settingsTab:CreateButton({
 })
 
 settingsTab:CreateButton({
-    name = "Unload Funky Friday",
+    name = "Unload Script",
     callback = function()
-        if state.stop then
-            state.stop()
-        end
+        if state.stop then state.stop() end
     end,
 })
 
--- ------------------------------------------------------------ CLEANUP & INIT
+-- ------------------------------------------------------------ TEARDOWN
 
 shared.YvetzalFunkyFriday = state
 
@@ -2240,60 +1723,8 @@ local function cleanup()
     pcall(function()
         localPlayer:SetAttribute("GCCAP", false)
         localPlayer:SetAttribute("GCCMechanics", false)
-        localPlayer:SetAttribute("GCCMechanicInterval", nil)
         localPlayer:SetAttribute("GCCAlive", false)
         localPlayer:SetAttribute("GCCFW", false)
-        localPlayer:SetAttribute("GCCFWKind", nil)
-        localPlayer:SetAttribute("GCCHitLane", nil)
-        localPlayer:SetAttribute("GCCSide", nil)
-        localPlayer:SetAttribute("GCCRunId", nil)
-        localPlayer:SetAttribute("GCCHoldMs", nil)
-        localPlayer:SetAttribute("GCCDodge", nil)
-        localPlayer:SetAttribute("GCCSickPct", nil)
-        localPlayer:SetAttribute("GCCGoodPct", nil)
-        localPlayer:SetAttribute("GCCOkPct", nil)
-        localPlayer:SetAttribute("GCCBadPct", nil)
-        localPlayer:SetAttribute("GCCMissPct", nil)
-        localPlayer:SetAttribute("GCCMissCooldown", nil)
-        localPlayer:SetAttribute("GCCSickMaxOffset", nil)
-        localPlayer:SetAttribute("GCCDynAcc", nil)
-        localPlayer:SetAttribute("GCDenseMs", nil)
-        localPlayer:SetAttribute("GCSparseMs", nil)
-        localPlayer:SetAttribute("GCComfortNps", nil)
-        localPlayer:SetAttribute("GCHardNps", nil)
-        localPlayer:SetAttribute("GCPenaltyPct", nil)
-        localPlayer:SetAttribute("GCSpamMinNps", nil)
-        localPlayer:SetAttribute("GCStrainDecay", nil)
-        localPlayer:SetAttribute("GCJackWeight", nil)
-        localPlayer:SetAttribute("GCCDmbod", nil)
-        localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
-        localPlayer:SetAttribute("GCCWatcherActive", nil)
-        localPlayer:SetAttribute("GCC_W_SessionActive", nil)
-        localPlayer:SetAttribute("GCCWatcherReset", nil)
-        localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
-        localPlayer:SetAttribute("GCC_W_DistinctNotes", nil)
-        localPlayer:SetAttribute("GCC_W_Duration", nil)
-        localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
-        localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
-        localPlayer:SetAttribute("GCC_W_PrimaryTier", nil)
-        localPlayer:SetAttribute("GCC_W_PctNormal", nil)
-        localPlayer:SetAttribute("GCC_W_PctHard", nil)
-        localPlayer:SetAttribute("GCC_W_PctInsane", nil)
-        localPlayer:SetAttribute("GCC_W_PctMania", nil)
-        localPlayer:SetAttribute("GCC_W_PctLunatic", nil)
-        localPlayer:SetAttribute("GCC_W_PctImpossible", nil)
-        localPlayer:SetAttribute("GCC_W_RollingNPS", nil)
-        localPlayer:SetAttribute("GCC_W_PeakNPS", nil)
-        localPlayer:SetAttribute("GCC_W_Spam", nil)
-        localPlayer:SetAttribute("GCC_W_Comfort", nil)
-        localPlayer:SetAttribute("GCC_W_DasCount", nil)
-        localPlayer:SetAttribute("GCC_W_DmbodCount", nil)
-        localPlayer:SetAttribute("GCC_W_TotalMissCount", nil)
-        localPlayer:SetAttribute("GCC_W_MissRate", nil)
-        localPlayer:SetAttribute("GCC_W_StrainPct", nil)
-        localPlayer:SetAttribute("GCC_W_JackStrainPct", nil)
-        localPlayer:SetAttribute("GCC_W_DiffIndex", nil)
-        localPlayer:SetAttribute("GCC_W_AvgOffsetMs", nil)
     end)
 
     if shared.YvetzalFunkyFriday == state then
@@ -2303,9 +1734,7 @@ local function cleanup()
 end
 
 shared.YvetzalFunkyFridayCleanup = cleanup
-state.stop = function()
-    cleanup()
-end
+state.stop = cleanup
 
 local originalUnload = window.Unload
 window.Unload = function(self)
@@ -2313,7 +1742,6 @@ window.Unload = function(self)
     if type(originalUnload) == "function" then
         return originalUnload(self)
     end
-    return nil
 end
 
 Main.start()
@@ -2321,7 +1749,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Loaded with Watcher Telemetry Engine v2.5 (Chord Compression & DAS v4.5)",
-    icon = iconAsset("crosshair"),
-    duration = 4,
+    content = "Zero-Allocation High-Performance Engine Loaded",
+    icon = iconAsset("flame"),
+    duration = 3,
 })
