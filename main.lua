@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized & Config System + Miss Cooldown + Dynamic Accuracy)
+-- Yvetzal: Funky Friday Autoplay (Optimized & Humanized Gaussian Timing)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -29,17 +29,18 @@ local DefaultConfig = {
     sideMode = "Auto",
     holdTime = 0.150,
     mechanicInterval = 0.05,
-    sickPct = 85,
-    goodPct = 10,
-    okPct = 5,
+    sickPct = 90,
+    goodPct = 7,
+    okPct = 3,
     badPct = 0,
     missPct = 0,
     missCooldown = 3.0,
+    sickMaxOffsetMs = 20, -- Tighter bound to prevent bleed into "Good"
     -- Dynamic Density Scaling
     dynamicAccuracy = true,
     denseThresholdMs = 35,
     sparseThresholdMs = 180,
-    strainPenaltyPct = 40,
+    strainPenaltyPct = 35,
 }
 
 local State = {}
@@ -77,7 +78,6 @@ local function saveConfig()
     end
 end
 
--- Auto-load on initialization
 loadConfig()
 
 -- ------------------------------------------------------------ THEME & ASSETS
@@ -284,6 +284,7 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCBadPct", State.badPct)
         localPlayer:SetAttribute("GCCMissPct", State.missPct)
         localPlayer:SetAttribute("GCCMissCooldown", State.missCooldown)
+        localPlayer:SetAttribute("GCCSickMaxOffset", State.sickMaxOffsetMs)
         -- Dynamic Density Scaling
         localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
         localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
@@ -321,6 +322,12 @@ local function injectActor()
         local actorRunId = LP:GetAttribute("GCCRunId")
 
         local clockS = (type(tick) == "function") and tick or time
+        local math_random = math.random
+        local math_abs = math.abs
+        local math_min = math.min
+        local math_max = math.max
+        local math_clamp = math.clamp
+        local math_floor = math.floor
 
         local fwV
         local laneCount = 4
@@ -342,14 +349,14 @@ local function injectActor()
         local nextPendulumRefresh = 0
 
         -- Accuracy Distribution, Dynamic Density, & Cooldown Cache
-        local cumSick = 85
-        local cumGood = 95
+        local cumSick = 90
+        local cumGood = 97
         local cumOk = 100
         local cumBad = 100
         local totalWeight = 100
         local nextMissAllowedAt = 0
 
-        -- Density tracking state (Zero-allocation)
+        -- Density tracking state
         local lastGlobalNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
@@ -362,16 +369,17 @@ local function injectActor()
             mechanicInterval = tonumber(LP:GetAttribute("GCCMechanicInterval")) or 0.05,
             holdWindow = (tonumber(LP:GetAttribute("GCCHoldMs")) or 150) * 0.001,
             sideName = LP:GetAttribute("GCCSide") or "Left",
-            sickPct = tonumber(LP:GetAttribute("GCCSickPct")) or 85,
-            goodPct = tonumber(LP:GetAttribute("GCCGoodPct")) or 10,
-            okPct = tonumber(LP:GetAttribute("GCCOkPct")) or 5,
+            sickPct = tonumber(LP:GetAttribute("GCCSickPct")) or 90,
+            goodPct = tonumber(LP:GetAttribute("GCCGoodPct")) or 7,
+            okPct = tonumber(LP:GetAttribute("GCCOkPct")) or 3,
             badPct = tonumber(LP:GetAttribute("GCCBadPct")) or 0,
             missPct = tonumber(LP:GetAttribute("GCCMissPct")) or 0,
             missCooldown = tonumber(LP:GetAttribute("GCCMissCooldown")) or 3.0,
+            sickMaxOffset = (tonumber(LP:GetAttribute("GCCSickMaxOffset")) or 20) * 0.001,
             dynAcc = LP:GetAttribute("GCCDynAcc") ~= false,
             denseMs = tonumber(LP:GetAttribute("GCDenseMs")) or 35,
             sparseMs = tonumber(LP:GetAttribute("GCSparseMs")) or 180,
-            penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 40,
+            penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 35,
             releaseDirty = false,
         }
 
@@ -419,16 +427,17 @@ local function injectActor()
         trackAttr("GCCMechanicInterval", function(v) attr.mechanicInterval = tonumber(v) or 0.05 end)
         trackAttr("GCCHoldMs", function(v) attr.holdWindow = (tonumber(v) or 150) * 0.001 end)
         trackAttr("GCCSide", function(v) attr.sideName = v or "Left" end)
-        trackAttr("GCCSickPct", function(v) attr.sickPct = tonumber(v) or 85; recalculateWeights() end)
-        trackAttr("GCCGoodPct", function(v) attr.goodPct = tonumber(v) or 10; recalculateWeights() end)
-        trackAttr("GCCOkPct", function(v) attr.okPct = tonumber(v) or 5; recalculateWeights() end)
+        trackAttr("GCCSickPct", function(v) attr.sickPct = tonumber(v) or 90; recalculateWeights() end)
+        trackAttr("GCCGoodPct", function(v) attr.goodPct = tonumber(v) or 7; recalculateWeights() end)
+        trackAttr("GCCOkPct", function(v) attr.okPct = tonumber(v) or 3; recalculateWeights() end)
         trackAttr("GCCBadPct", function(v) attr.badPct = tonumber(v) or 0; recalculateWeights() end)
         trackAttr("GCCMissPct", function(v) attr.missPct = tonumber(v) or 0; recalculateWeights() end)
         trackAttr("GCCMissCooldown", function(v) attr.missCooldown = tonumber(v) or 3.0 end)
+        trackAttr("GCCSickMaxOffset", function(v) attr.sickMaxOffset = (tonumber(v) or 20) * 0.001 end)
         trackAttr("GCCDynAcc", function(v) attr.dynAcc = v ~= false end)
         trackAttr("GCDenseMs", function(v) attr.denseMs = tonumber(v) or 35 end)
         trackAttr("GCSparseMs", function(v) attr.sparseMs = tonumber(v) or 180 end)
-        trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 40 end)
+        trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 35 end)
 
         local function getPlayerGui()
             local pg = cachedPlayerGui
@@ -521,7 +530,7 @@ local function injectActor()
             if not p then return nil end
             if p >= 1 and p <= count then return p end
             if p >= 0 and p < count then return p + 1 end
-            return (math.floor(p) % count) + 1
+            return (math_floor(p) % count) + 1
         end
 
         local function normDiff(noteTime, songTime)
@@ -531,13 +540,24 @@ local function injectActor()
             return noteTime - songTime
         end
 
+        -- Human-like Gaussian offset generator (Irwin-Hall n=3, Mean = 0.0)
+        local function gaussianOffset(maxWindowSec)
+            -- Sum of 3 uniform randoms approximates a standard normal distribution
+            local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
+            -- Scale so ~99.7% of values fall within [-maxWindowSec, maxWindowSec]
+            local offset = z * (maxWindowSec * 0.33)
+            return math_clamp(offset, -maxWindowSec, maxWindowSec)
+        end
+
         local function shouldHit(arrow, diff, dt, targetOffset)
             local adjDiff = diff - (targetOffset or 0)
             local prev = arrow._bybyPrev
             arrow._bybyPrev = adjDiff
-            local lateWindow = math.min(0.08, math.max(0.025, (dt or 0.016) * 2.5))
-            if adjDiff <= 0 and adjDiff >= -lateWindow then return true end
-            if prev ~= nil and prev > 0 and adjDiff < -lateWindow and adjDiff >= -0.15 then return true end
+            -- Half-frame window check prevents discrete rendering steps from missing triggers
+            local step = dt or 0.016
+            local lateWindow = math_min(0.06, math_max(0.02, step * 1.75))
+            if adjDiff <= (step * 0.3) and adjDiff >= -lateWindow then return true end
+            if prev ~= nil and prev > 0 and adjDiff < -lateWindow and adjDiff >= -0.12 then return true end
             return false
         end
 
@@ -611,7 +631,6 @@ local function injectActor()
             end
         end
 
-        -- Flat-array lane releases (Zero GC Hash churn)
         local heldLanes = { false, false, false, false, false, false, false, false, false, false }
         local releaseAt = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
@@ -641,7 +660,7 @@ local function injectActor()
             pressLane(lane, false)
             pressLane(lane, true)
             heldLanes[lane] = true
-            releaseAt[lane] = nowS + math.max(0.03, (length and length > 0.04) and length or holdWindow)
+            releaseAt[lane] = nowS + math_max(0.03, (length and length > 0.04) and length or holdWindow)
         end
 
         local scan = {
@@ -711,22 +730,19 @@ local function injectActor()
             if not rawTime then return end
             local nTime = (rawTime > 1000 and scan.timepos < 500) and (rawTime * 0.001) or rawTime
 
-            -- Assign offset with Density-Adaptive Scaling & Miss Cooldown (Zero allocations)
+            -- Assign offset with Gaussian Sick Distribution & Strain Scaling
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss then
-                -- O(1) Inter-note Interval Strain calculation
-                local deltaGlobal = (lastGlobalNoteTime > 0) and math.abs(nTime - lastGlobalNoteTime) or 1.0
+                local deltaGlobal = (lastGlobalNoteTime > 0) and math_abs(nTime - lastGlobalNoteTime) or 1.0
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
-                local deltaLane = (lastLaneT > 0) and math.abs(nTime - lastLaneT) or 1.0
-                local dtMs = math.min(deltaGlobal, deltaLane) * 1000
+                local deltaLane = (lastLaneT > 0) and math_abs(nTime - lastLaneT) or 1.0
+                local dtMs = math_min(deltaGlobal, deltaLane) * 1000
 
-                -- Update tracking timestamps
                 lastGlobalNoteTime = nTime
                 if targetLaneIdx and targetLaneIdx >= 1 and targetLaneIdx <= 10 then
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- Dynamic Weight Shift computation
                 local curSick = cumSick
                 local curGood = cumGood
                 local curOk = cumOk
@@ -737,7 +753,7 @@ local function injectActor()
                     local dDense = attr.denseMs
                     local dSparse = attr.sparseMs
                     local range = (dSparse > dDense) and (dSparse - dDense) or 1
-                    local alpha = math.clamp(1.0 - ((dtMs - dDense) / range), 0.0, 1.0)
+                    local alpha = math_clamp(1.0 - ((dtMs - dDense) / range), 0.0, 1.0)
 
                     if alpha > 0 then
                         local penalty = alpha * (attr.penaltyPct * 0.01)
@@ -745,8 +761,8 @@ local function injectActor()
                         local newSick = wSick * (1.0 - penalty)
                         local shaved = wSick - newSick
 
-                        local wGood = attr.goodPct + (shaved * 0.60)
-                        local wOk = attr.okPct + (shaved * 0.35)
+                        local wGood = attr.goodPct + (shaved * 0.65)
+                        local wOk = attr.okPct + (shaved * 0.30)
                         local wBad = attr.badPct + (shaved * 0.05)
 
                         curSick = newSick
@@ -761,18 +777,19 @@ local function injectActor()
                 local currentMax = canMiss and curTotal or curBad
                 if currentMax <= 0 then currentMax = 100 end
 
-                local roll = math.random() * currentMax
+                local roll = math_random() * currentMax
                 if roll < curSick then
-                    arrow._bybyTargetOffset = math.random(-49, 49) * 0.001
+                    -- Normal distribution with mean 0.0ms tightly clustered inside Sick window
+                    arrow._bybyTargetOffset = gaussianOffset(attr.sickMaxOffset)
                 elseif roll < curGood then
-                    local ms = math.random(50, 74)
-                    arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) * 0.001
+                    local ms = math_random(28, 48)
+                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 elseif roll < curOk then
-                    local ms = math.random(75, 99)
-                    arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) * 0.001
+                    local ms = math_random(52, 75)
+                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 elseif roll < curBad then
-                    local ms = math.random(100, 120)
-                    arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) * 0.001
+                    local ms = math_random(80, 110)
+                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 else
                     arrow._bybyMiss = true
                     nextMissAllowedAt = scan.nowS + attr.missCooldown
@@ -842,7 +859,7 @@ local function injectActor()
                         local pivot = getPendulumPivot(nowS)
                         if pivot and pivot:IsA("GuiObject") and pivot.Visible then
                             dispatchedByPendulum = true
-                            local centered = math.abs(pivot.Rotation) <= 3
+                            local centered = math_abs(pivot.Rotation) <= 3
                             if centered and not mechanicCentered then
                                 mechanicCentered = true
                                 if type(actionController.Dispatch) == "function" then
@@ -850,7 +867,7 @@ local function injectActor()
                                 elseif type(activeAction.Callback) == "function" then
                                     pcall(activeAction.Callback)
                                 end
-                            elseif math.abs(pivot.Rotation) >= 8 then
+                            elseif math_abs(pivot.Rotation) >= 8 then
                                 mechanicCentered = false
                             end
                         end
@@ -946,7 +963,7 @@ local function injectActor()
                         for _, v in ipairs(list) do
                             local n = tonumber(v)
                             if n and n >= 3 and n <= 9 then
-                                laneCount = math.floor(n)
+                                laneCount = math_floor(n)
                                 break
                             end
                         end
@@ -1102,6 +1119,19 @@ uiElements.dynamicAccuracy = mainTab:CreateToggle({
     end,
 })
 
+uiElements.sickMaxOffsetMs = mainTab:CreateSlider({
+    name = "Sick Max Spread (±ms)",
+    flag = "Yvetzal_FF_SickMaxSpread",
+    range = { 5, 35 },
+    value = State.sickMaxOffsetMs,
+    increment = 1,
+    suffix = " ms",
+    callback = function(v)
+        State.sickMaxOffsetMs = v
+        syncFlags()
+    end,
+})
+
 uiElements.denseThresholdMs = mainTab:CreateSlider({
     name = "Dense Threshold",
     flag = "Yvetzal_FF_DenseMs",
@@ -1142,7 +1172,7 @@ uiElements.strainPenaltyPct = mainTab:CreateSlider({
 })
 
 uiElements.sickPct = mainTab:CreateSlider({
-    name = "Sick Base Chance ([-49ms, +49ms])",
+    name = "Sick Base Chance",
     flag = "Yvetzal_FF_SickPct",
     range = { 0, 100 },
     value = State.sickPct,
@@ -1155,7 +1185,7 @@ uiElements.sickPct = mainTab:CreateSlider({
 })
 
 uiElements.goodPct = mainTab:CreateSlider({
-    name = "Good Base Chance (50ms - 74ms)",
+    name = "Good Base Chance",
     flag = "Yvetzal_FF_GoodPct",
     range = { 0, 100 },
     value = State.goodPct,
@@ -1168,7 +1198,7 @@ uiElements.goodPct = mainTab:CreateSlider({
 })
 
 uiElements.okPct = mainTab:CreateSlider({
-    name = "Ok Base Chance (75ms - 99ms)",
+    name = "Ok Base Chance",
     flag = "Yvetzal_FF_OkPct",
     range = { 0, 100 },
     value = State.okPct,
@@ -1181,7 +1211,7 @@ uiElements.okPct = mainTab:CreateSlider({
 })
 
 uiElements.badPct = mainTab:CreateSlider({
-    name = "Bad Base Chance (100ms - 120ms)",
+    name = "Bad Base Chance",
     flag = "Yvetzal_FF_BadPct",
     range = { 0, 100 },
     value = State.badPct,
@@ -1256,6 +1286,7 @@ local function syncUIWithState()
         if uiElements.mechanics then uiElements.mechanics:Set(State.mechanics) end
         if uiElements.sideMode then uiElements.sideMode:Set(State.sideMode) end
         if uiElements.dynamicAccuracy then uiElements.dynamicAccuracy:Set(State.dynamicAccuracy) end
+        if uiElements.sickMaxOffsetMs then uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs) end
         if uiElements.denseThresholdMs then uiElements.denseThresholdMs:Set(State.denseThresholdMs) end
         if uiElements.sparseThresholdMs then uiElements.sparseThresholdMs:Set(State.sparseThresholdMs) end
         if uiElements.strainPenaltyPct then uiElements.strainPenaltyPct:Set(State.strainPenaltyPct) end
@@ -1379,6 +1410,7 @@ local function cleanup()
         localPlayer:SetAttribute("GCCBadPct", nil)
         localPlayer:SetAttribute("GCCMissPct", nil)
         localPlayer:SetAttribute("GCCMissCooldown", nil)
+        localPlayer:SetAttribute("GCCSickMaxOffset", nil)
         localPlayer:SetAttribute("GCCDynAcc", nil)
         localPlayer:SetAttribute("GCDenseMs", nil)
         localPlayer:SetAttribute("GCSparseMs", nil)
@@ -1410,7 +1442,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Autoplay loaded with Dynamic Accuracy Scaling",
+    content = "Autoplay loaded with Humanized Gaussian Timing",
     icon = iconAsset("eye"),
     duration = 4,
 })
