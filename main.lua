@@ -156,7 +156,7 @@ end
 
 local rayfield
 local ok, err = pcall(function()
-    return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+    rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 end)
 if not ok or not rayfield then
     warn("[Yvetzal] Rayfield Gen2 failed to load:", err)
