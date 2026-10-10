@@ -1,7 +1,7 @@
 -- Yvetzal: Funky Friday Autoplay (Optimized DAS v4.5 & Zero-Allocation Engine)
 
 if not game:IsLoaded() then
-    game.Loaded:Wait()
+	game.Loaded:Wait()
 end
 
 local players = game:GetService("Players")
@@ -12,10 +12,10 @@ local shared = type(getgenv) == "function" and getgenv() or _G
 
 -- Kill prior instances
 if shared.GoodGammingChairCleanup then
-    pcall(shared.GoodGammingChairCleanup)
+	pcall(shared.GoodGammingChairCleanup)
 end
 if shared.YvetzalFunkyFriday and shared.YvetzalFunkyFriday.stop then
-    pcall(shared.YvetzalFunkyFriday.stop)
+	pcall(shared.YvetzalFunkyFriday.stop)
 end
 
 -- ------------------------------------------------------------ CONFIGURATION SYSTEM
@@ -23,41 +23,41 @@ end
 local CONFIG_FILE = "Yvetzal_FunkyFriday.json"
 
 local DefaultConfig = {
-    autoplay = true,
-    dodge = true,
-    mechanics = true,
-    sideMode = "Auto",
-    holdTime = 0.150,
-    mechanicInterval = 0.05,
-    -- Timing Weights
-    sickPct = 92,
-    goodPct = 6,
-    okPct = 2,
-    badPct = 0,
-    missPct = 0,
-    missCooldown = 4.0,
-    sickMaxOffsetMs = 18,
-    -- Dynamic Accuracy Scaling (DAS v4.5)
-    dynamicAccuracy = true,
-    denseThresholdMs = 45,
-    sparseThresholdMs = 240,
-    comfortNps = 7,
-    hardNps = 14,
-    strainPenaltyPct = 40,
-    -- Extended DAS Parameters
-    spamMinNps = 9,
-    strainDecayRate = 2.0,
-    jackStrainWeight = 0.20,
-    -- Dynamic Missing Based on Difficulty (DMBOD v4.5)
-    dmbod = false,
-    dmbodMaxMissPct = 5,
-    -- Watcher Engine
-    watcherEnabled = true,
+	autoplay = true,
+	dodge = true,
+	mechanics = true,
+	sideMode = "Auto",
+	holdTime = 0.150,
+	mechanicInterval = 0.05,
+	-- Timing Weights
+	sickPct = 92,
+	goodPct = 6,
+	okPct = 2,
+	badPct = 0,
+	missPct = 0,
+	missCooldown = 4.0,
+	sickMaxOffsetMs = 18,
+	-- Dynamic Accuracy Scaling (DAS v4.5)
+	dynamicAccuracy = true,
+	denseThresholdMs = 45,
+	sparseThresholdMs = 240,
+	comfortNps = 7,
+	hardNps = 14,
+	strainPenaltyPct = 40,
+	-- Extended DAS Parameters
+	spamMinNps = 9,
+	strainDecayRate = 2.0,
+	jackStrainWeight = 0.20,
+	-- Dynamic Missing Based on Difficulty (DMBOD v4.5)
+	dmbod = false,
+	dmbodMaxMissPct = 5,
+	-- Watcher Engine
+	watcherEnabled = true,
 }
 
 local State = {}
 for k, v in pairs(DefaultConfig) do
-    State[k] = v
+	State[k] = v
 end
 State.autoSide = "Left"
 State.inMatch = false
@@ -66,30 +66,30 @@ State.sessionActive = false
 State.sessionStartTime = 0
 
 local function loadConfig()
-    if type(readfile) == "function" and type(isfile) == "function" and isfile(CONFIG_FILE) then
-        local ok, data = pcall(function()
-            return httpService:JSONDecode(readfile(CONFIG_FILE))
-        end)
-        if ok and type(data) == "table" then
-            for k, v in pairs(data) do
-                if State[k] ~= nil then
-                    State[k] = v
-                end
-            end
-            return true
-        end
-    end
-    return false
+	if type(readfile) == "function" and type(isfile) == "function" and isfile(CONFIG_FILE) then
+		local ok, data = pcall(function()
+			return httpService:JSONDecode(readfile(CONFIG_FILE))
+		end)
+		if ok and type(data) == "table" then
+			for k, v in pairs(data) do
+				if State[k] ~= nil then
+					State[k] = v
+				end
+			end
+			return true
+		end
+	end
+	return false
 end
 
 local function saveConfig()
-    if type(writefile) == "function" then
-        local toSave = {}
-        for k in pairs(DefaultConfig) do
-            toSave[k] = State[k]
-        end
-        pcall(writefile, CONFIG_FILE, httpService:JSONEncode(toSave))
-    end
+	if type(writefile) == "function" then
+		local toSave = {}
+		for k in pairs(DefaultConfig) do
+			toSave[k] = State[k]
+		end
+		pcall(writefile, CONFIG_FILE, httpService:JSONEncode(toSave))
+	end
 end
 
 loadConfig()
@@ -97,113 +97,113 @@ loadConfig()
 -- ------------------------------------------------------------ THEME & ASSETS
 
 local theme = {
-    WindowColor = ColorSequence.new(Color3.fromRGB(8, 8, 8), Color3.fromRGB(0, 0, 0)),
-    ShadowColor = Color3.fromRGB(0, 0, 0),
-    SurfaceStroke = Color3.fromRGB(120, 15, 15),
-    CornerRoundness = UDim.new(0, 8),
-    ElementCornerRadius = UDim.new(0, 6),
-    ContentColor = Color3.fromRGB(230, 230, 230),
-    TitlingColor = Color3.fromRGB(255, 255, 255),
-    ActionColor = Color3.fromRGB(255, 255, 255),
-    ElementTextHoverColor = Color3.fromRGB(255, 255, 255),
-    TabColor = Color3.fromRGB(255, 255, 255),
-    TabBackground = ColorSequence.new(Color3.fromRGB(22, 22, 22), Color3.fromRGB(8, 8, 8)),
-    TabStroke = ColorSequence.new(Color3.fromRGB(230, 30, 30), Color3.fromRGB(110, 10, 10)),
-    ElementGradient = ColorSequence.new(Color3.fromRGB(18, 18, 18), Color3.fromRGB(10, 10, 10)),
-    ElementStroke = Color3.fromRGB(60, 60, 60),
-    ElementStrokeHover = Color3.fromRGB(230, 40, 40),
-    StatBackground = Color3.fromRGB(30, 6, 6),
-    AccentColor = Color3.fromRGB(220, 25, 25),
-    AccentStroke = Color3.fromRGB(255, 70, 70),
-    SliderBackground = Color3.fromRGB(35, 35, 35),
-    SliderProgress = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(210, 210, 210)),
-    SliderHandle = Color3.fromRGB(255, 255, 255),
-    SliderStroke = Color3.fromRGB(60, 60, 60),
-    ToggleTrack = Color3.fromRGB(30, 30, 30),
-    ToggleKnobOff = Color3.fromRGB(220, 220, 220),
-    DropdownHighlight = Color3.fromRGB(180, 25, 25),
-    FieldBackground = Color3.fromRGB(14, 14, 14),
-    FieldGlow = Color3.fromRGB(120, 20, 20),
-    PlaceholderColor = Color3.fromRGB(150, 150, 150),
-    NeutralButton = Color3.fromRGB(26, 26, 26),
-    NeutralButtonHover = Color3.fromRGB(45, 45, 45),
-    NeutralButtonStroke = Color3.fromRGB(80, 15, 15),
-    ErrorColor = Color3.fromRGB(230, 40, 40),
-    ErrorStrokeColor = Color3.fromRGB(255, 90, 90),
+	WindowColor = ColorSequence.new(Color3.fromRGB(8, 8, 8), Color3.fromRGB(0, 0, 0)),
+	ShadowColor = Color3.fromRGB(0, 0, 0),
+	SurfaceStroke = Color3.fromRGB(120, 15, 15),
+	CornerRoundness = UDim.new(0, 8),
+	ElementCornerRadius = UDim.new(0, 6),
+	ContentColor = Color3.fromRGB(230, 230, 230),
+	TitlingColor = Color3.fromRGB(255, 255, 255),
+	ActionColor = Color3.fromRGB(255, 255, 255),
+	ElementTextHoverColor = Color3.fromRGB(255, 255, 255),
+	TabColor = Color3.fromRGB(255, 255, 255),
+	TabBackground = ColorSequence.new(Color3.fromRGB(22, 22, 22), Color3.fromRGB(8, 8, 8)),
+	TabStroke = ColorSequence.new(Color3.fromRGB(230, 30, 30), Color3.fromRGB(110, 10, 10)),
+	ElementGradient = ColorSequence.new(Color3.fromRGB(18, 18, 18), Color3.fromRGB(10, 10, 10)),
+	ElementStroke = Color3.fromRGB(60, 60, 60),
+	ElementStrokeHover = Color3.fromRGB(230, 40, 40),
+	StatBackground = Color3.fromRGB(30, 6, 6),
+	AccentColor = Color3.fromRGB(220, 25, 25),
+	AccentStroke = Color3.fromRGB(255, 70, 70),
+	SliderBackground = Color3.fromRGB(35, 35, 35),
+	SliderProgress = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(210, 210, 210)),
+	SliderHandle = Color3.fromRGB(255, 255, 255),
+	SliderStroke = Color3.fromRGB(60, 60, 60),
+	ToggleTrack = Color3.fromRGB(30, 30, 30),
+	ToggleKnobOff = Color3.fromRGB(220, 220, 220),
+	DropdownHighlight = Color3.fromRGB(180, 25, 25),
+	FieldBackground = Color3.fromRGB(14, 14, 14),
+	FieldGlow = Color3.fromRGB(120, 20, 20),
+	PlaceholderColor = Color3.fromRGB(150, 150, 150),
+	NeutralButton = Color3.fromRGB(26, 26, 26),
+	NeutralButtonHover = Color3.fromRGB(45, 45, 45),
+	NeutralButtonStroke = Color3.fromRGB(80, 15, 15),
+	ErrorColor = Color3.fromRGB(230, 40, 40),
+	ErrorStrokeColor = Color3.fromRGB(255, 90, 90),
 }
 
 local icons = {
-    ["box-select"] = { 16898612819, 820, 147 },
-    crosshair = { 16898613044, 453, 869 },
-    eye = { 16898613353, 771, 563 },
-    flame = { 16898613353, 967, 306 },
-    palette = { 16898613613, 453, 918 },
-    settings = { 16898613777, 771, 257 },
+	["box-select"] = { 16898612819, 820, 147 },
+	crosshair = { 16898613044, 453, 869 },
+	eye = { 16898613353, 771, 563 },
+	flame = { 16898613353, 967, 306 },
+	palette = { 16898613613, 453, 918 },
+	settings = { 16898613777, 771, 257 },
 }
 
 local function iconAsset(name)
-    local i = icons[name]
-    return i and ("rbxassetid://" .. i[1])
+	local i = icons[name]
+	return i and ("rbxassetid://" .. i[1])
 end
 
 local function cropIcon(img, name)
-    local i = icons[name]
-    if img and i then
-        img.ImageRectSize = Vector2.new(48, 48)
-        img.ImageRectOffset = Vector2.new(i[2], i[3])
-    end
+	local i = icons[name]
+	if img and i then
+		img.ImageRectSize = Vector2.new(48, 48)
+		img.ImageRectOffset = Vector2.new(i[2], i[3])
+	end
 end
 
 local rayfield
 for _, url in ipairs({
-    "https://sirius.menu/gen2",
-    "https://sirius.menu/rayfield",
-    "https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua",
+	"https://sirius.menu/gen2",
+	"https://sirius.menu/rayfield",
+	"https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua",
 }) do
-    local ok, res = pcall(function()
-        local src = game:HttpGet(url)
-        local fn = loadstring(src)
-        if type(fn) == "function" then
-            return fn()
-        end
-        return nil
-    end)
-    if ok and type(res) == "table" and (res.CreateWindow or res.createWindow) then
-        rayfield = res
-        break
-    end
+	local ok, res = pcall(function()
+		local src = game:HttpGet(url)
+		local fn = loadstring(src)
+		if type(fn) == "function" then
+			return fn()
+		end
+		return nil
+	end)
+	if ok and type(res) == "table" and (res.CreateWindow or res.createWindow) then
+		rayfield = res
+		break
+	end
 end
 
 if not rayfield then
-    warn("[Yvetzal] Failed to load Rayfield UI engine.")
-    return
+	warn("[Yvetzal] Failed to load Rayfield UI engine.")
+	return
 end
 
 local window = rayfield:CreateWindow({
-    name = "Yvetzal",
-    subtitle = "FUNKY FRIDAY HIGH-PERFORMANCE v4.5",
-    icon = iconAsset("flame"),
-    showName = "Yvetzal",
-    showIcon = iconAsset("flame"),
-    sidebarLayout = true,
-    profile = "Infernum",
-    theme = theme,
+	name = "Yvetzal",
+	subtitle = "FUNKY FRIDAY HIGH-PERFORMANCE v4.5",
+	icon = iconAsset("flame"),
+	showName = "Yvetzal",
+	showIcon = iconAsset("flame"),
+	sidebarLayout = true,
+	profile = "Infernum",
+	theme = theme,
 })
 cropIcon(window.topbarIcon, "flame")
 cropIcon(window.collapsedIcon, "flame")
 
 local function makeTab(name, icon)
-    local tab = window:CreateTab({ name = name, icon = iconAsset(icon) })
-    cropIcon(tab.topbarItemIcon, icon)
-    local createSection = tab.CreateSection
-    tab.CreateSection = function(self, props)
-        local sIcon = props.icon
-        props.icon = iconAsset(sIcon)
-        local section = createSection(self, props)
-        cropIcon(section.iconLabel, sIcon)
-        return section
-    end
-    return tab
+	local tab = window:CreateTab({ name = name, icon = iconAsset(icon) })
+	cropIcon(tab.topbarItemIcon, icon)
+	local createSection = tab.CreateSection
+	tab.CreateSection = function(self, props)
+		local sIcon = props.icon
+		props.icon = iconAsset(sIcon)
+		local section = createSection(self, props)
+		cropIcon(section.iconLabel, sIcon)
+		return section
+	end
+	return tab
 end
 
 local mainTab = makeTab("Autoplay", "eye")
@@ -213,80 +213,90 @@ local settingsTab = makeTab("Settings", "settings")
 -- ------------------------------------------------------------ UNIVERSAL TEXT/LABEL ADAPTER
 
 local function createTextItem(targetTab, title, initialText)
-    local item = nil
-    local combinedText = (title and (title .. "\n") or "") .. (initialText or "")
+	local item = nil
+	local combinedText = (title and (title .. "\n") or "") .. (initialText or "")
 
-    if type(targetTab.CreateParagraph) == "function" then
-        local ok, res = pcall(function()
-            return targetTab:CreateParagraph({ Title = title or "Info", Content = initialText or "--" })
-        end)
-        if ok and res then item = res end
-    end
+	if type(targetTab.CreateParagraph) == "function" then
+		local ok, res = pcall(function()
+			return targetTab:CreateParagraph({ Title = title or "Info", Content = initialText or "--" })
+		end)
+		if ok and res then
+			item = res
+		end
+	end
 
-    if not item and type(targetTab.CreateLabel) == "function" then
-        local ok, res = pcall(function()
-            return targetTab:CreateLabel({ name = title or "Info", text = initialText or "--" })
-        end)
-        if not ok or not res then
-            ok, res = pcall(function()
-                return targetTab:CreateLabel(combinedText)
-            end)
-        end
-        if ok and res then item = res end
-    end
+	if not item and type(targetTab.CreateLabel) == "function" then
+		local ok, res = pcall(function()
+			return targetTab:CreateLabel({ name = title or "Info", text = initialText or "--" })
+		end)
+		if not ok or not res then
+			ok, res = pcall(function()
+				return targetTab:CreateLabel(combinedText)
+			end)
+		end
+		if ok and res then
+			item = res
+		end
+	end
 
-    if not item and type(targetTab.CreateText) == "function" then
-        local ok, res = pcall(function()
-            return targetTab:CreateText({ name = title or "Info", text = initialText or "--" })
-        end)
-        if not ok or not res then
-            ok, res = pcall(function()
-                return targetTab:CreateText(combinedText)
-            end)
-        end
-        if ok and res then item = res end
-    end
+	if not item and type(targetTab.CreateText) == "function" then
+		local ok, res = pcall(function()
+			return targetTab:CreateText({ name = title or "Info", text = initialText or "--" })
+		end)
+		if not ok or not res then
+			ok, res = pcall(function()
+				return targetTab:CreateText(combinedText)
+			end)
+		end
+		if ok and res then
+			item = res
+		end
+	end
 
-    local handle = {
-        raw = item,
-        title = title or "",
-        content = initialText or "--",
-    }
+	local handle = {
+		raw = item,
+		title = title or "",
+		content = initialText or "--",
+	}
 
-    function handle:Set(props)
-        local newTitle = (type(props) == "table" and (props.Title or props.title)) or self.title
-        local newContent = (type(props) == "table" and (props.Content or props.content)) or (type(props) == "string" and props) or self.content
+	function handle:Set(props)
+		local newTitle = (type(props) == "table" and (props.Title or props.title)) or self.title
+		local newContent = (type(props) == "table" and (props.Content or props.content))
+			or (type(props) == "string" and props)
+			or self.content
 
-        self.title = newTitle
-        self.content = newContent
+		self.title = newTitle
+		self.content = newContent
 
-        if not self.raw then return end
-        local fullText = (self.title ~= "" and (self.title .. "\n") or "") .. self.content
+		if not self.raw then
+			return
+		end
+		local fullText = (self.title ~= "" and (self.title .. "\n") or "") .. self.content
 
-        if type(self.raw.Set) == "function" then
-            pcall(function()
-                self.raw:Set({ Title = self.title, Content = self.content, title = self.title, content = self.content })
-            end)
-            pcall(function()
-                self.raw:Set(fullText)
-            end)
-        elseif type(self.raw.set) == "function" then
-            pcall(function()
-                self.raw:set(fullText)
-            end)
-        end
-    end
+		if type(self.raw.Set) == "function" then
+			pcall(function()
+				self.raw:Set({ Title = self.title, Content = self.content, title = self.title, content = self.content })
+			end)
+			pcall(function()
+				self.raw:Set(fullText)
+			end)
+		elseif type(self.raw.set) == "function" then
+			pcall(function()
+				self.raw:set(fullText)
+			end)
+		end
+	end
 
-    return handle
+	return handle
 end
 
 -- ------------------------------------------------------------ RUN STATE & TOKENS
 
 local Tune = {
-    sideRefresh   = 2.0,
-    stepInterval  = 0.12,
-    maxStepErrors = 30,
-    actorRetries  = 20,
+	sideRefresh = 2.0,
+	stepInterval = 0.12,
+	maxStepErrors = 30,
+	actorRetries = 20,
 }
 
 local runToken = {}
@@ -294,13 +304,13 @@ shared.YvetzalFunkyFridayToken = runToken
 local runId = tostring(runToken)
 
 local function isAlive()
-    return shared.YvetzalFunkyFridayToken == runToken
+	return shared.YvetzalFunkyFridayToken == runToken
 end
 
 local connections = {}
 local function track(conn)
-    connections[#connections + 1] = conn
-    return conn
+	connections[#connections + 1] = conn
+	return conn
 end
 
 local state = { alive = true, stop = nil }
@@ -313,45 +323,55 @@ local lastStageSearch = 0
 local Side = {}
 
 function Side.detect()
-    local now = os.clock()
-    if not cachedStagesFolder or (now - lastStageSearch > 5.0) then
-        lastStageSearch = now
-        local map = workspace:FindFirstChild("Map")
-        cachedStagesFolder = map and map:FindFirstChild("Stages")
-    end
+	local now = os.clock()
+	if not cachedStagesFolder or (now - lastStageSearch > 5.0) then
+		lastStageSearch = now
+		local map = workspace:FindFirstChild("Map")
+		cachedStagesFolder = map and map:FindFirstChild("Stages")
+	end
 
-    if not cachedStagesFolder then return nil end
+	if not cachedStagesFolder then
+		return nil
+	end
 
-    local marker = cachedStagesFolder:FindFirstChild(localPlayer.Name, true)
-    if not marker and localPlayer.DisplayName ~= localPlayer.Name then
-        marker = cachedStagesFolder:FindFirstChild(localPlayer.DisplayName, true)
-    end
+	local marker = cachedStagesFolder:FindFirstChild(localPlayer.Name, true)
+	if not marker and localPlayer.DisplayName ~= localPlayer.Name then
+		marker = cachedStagesFolder:FindFirstChild(localPlayer.DisplayName, true)
+	end
 
-    local cur = marker and marker.Parent
-    while cur and cur ~= cachedStagesFolder do
-        local n = cur.Name
-        if n:find("Left", 1, true) then return "Left" end
-        if n:find("Right", 1, true) then return "Right" end
-        cur = cur.Parent
-    end
-    return nil
+	local cur = marker and marker.Parent
+	while cur and cur ~= cachedStagesFolder do
+		local n = cur.Name
+		if n:find("Left", 1, true) then
+			return "Left"
+		end
+		if n:find("Right", 1, true) then
+			return "Right"
+		end
+		cur = cur.Parent
+	end
+	return nil
 end
 
 function Side.update()
-    if State.sideMode ~= "Auto" then
-        if State.sideMode ~= State.autoSide then
-            State.autoSide = State.sideMode
-            pcall(function() localPlayer:SetAttribute("GCCSide", State.autoSide) end)
-        end
-        return State.autoSide
-    end
+	if State.sideMode ~= "Auto" then
+		if State.sideMode ~= State.autoSide then
+			State.autoSide = State.sideMode
+			pcall(function()
+				localPlayer:SetAttribute("GCCSide", State.autoSide)
+			end)
+		end
+		return State.autoSide
+	end
 
-    local side = Side.detect()
-    if side and side ~= State.autoSide then
-        State.autoSide = side
-        pcall(function() localPlayer:SetAttribute("GCCSide", side) end)
-    end
-    return side
+	local side = Side.detect()
+	if side and side ~= State.autoSide then
+		State.autoSide = side
+		pcall(function()
+			localPlayer:SetAttribute("GCCSide", side)
+		end)
+	end
+	return side
 end
 
 -- ------------------------------------------------------------ GAME UI HOOK (CACHED)
@@ -359,84 +379,91 @@ end
 local GameUI = { game = nil, fields = nil, nextTry = 0 }
 
 function GameUI.get(now)
-    local g, f = GameUI.game, GameUI.fields
-    if g and f and g.Parent and f.Parent then
-        return g, f
-    end
-    if now < GameUI.nextTry then return nil, nil end
-    GameUI.nextTry = now + 0.5
+	local g, f = GameUI.game, GameUI.fields
+	if g and f and g.Parent and f.Parent then
+		return g, f
+	end
+	if now < GameUI.nextTry then
+		return nil, nil
+	end
+	GameUI.nextTry = now + 0.5
 
-    local pgui = localPlayer:FindFirstChild("PlayerGui")
-    local win = pgui and pgui:FindFirstChild("Window")
-    g = win and win:FindFirstChild("Game")
-    f = g and g:FindFirstChild("Fields")
-    GameUI.game, GameUI.fields = g, f
-    return g, f
+	local pgui = localPlayer:FindFirstChild("PlayerGui")
+	local win = pgui and pgui:FindFirstChild("Window")
+	g = win and win:FindFirstChild("Game")
+	f = g and g:FindFirstChild("Fields")
+	GameUI.game, GameUI.fields = g, f
+	return g, f
 end
 
 -- ------------------------------------------------------------ ACTOR FLAGS
 
 local function syncFlags()
-    pcall(function()
-        localPlayer:SetAttribute("GCCAP", State.autoplay)
-        localPlayer:SetAttribute("GCCMechanics", State.mechanics)
-        localPlayer:SetAttribute("GCCMechanicInterval", State.mechanicInterval)
-        localPlayer:SetAttribute("GCCHoldMs", math.floor(State.holdTime * 1000))
-        localPlayer:SetAttribute("GCCDodge", State.dodge)
-        localPlayer:SetAttribute("GCCSide", State.autoSide)
-        localPlayer:SetAttribute("GCCAlive", isAlive())
-        localPlayer:SetAttribute("GCCRunId", runId)
-        -- Timing & Accuracy
-        localPlayer:SetAttribute("GCCSickPct", State.sickPct)
-        localPlayer:SetAttribute("GCCGoodPct", State.goodPct)
-        localPlayer:SetAttribute("GCCOkPct", State.okPct)
-        localPlayer:SetAttribute("GCCBadPct", State.badPct)
-        localPlayer:SetAttribute("GCCMissPct", State.missPct)
-        localPlayer:SetAttribute("GCCMissCooldown", State.missCooldown)
-        localPlayer:SetAttribute("GCCSickMaxOffset", State.sickMaxOffsetMs)
-        -- Dynamic Accuracy Scaling (DAS)
-        localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
-        localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
-        localPlayer:SetAttribute("GCSparseMs", State.sparseThresholdMs)
-        localPlayer:SetAttribute("GCComfortNps", State.comfortNps)
-        localPlayer:SetAttribute("GCHardNps", State.hardNps)
-        localPlayer:SetAttribute("GCPenaltyPct", State.strainPenaltyPct)
-        -- Extended DAS
-        localPlayer:SetAttribute("GCSpamMinNps", State.spamMinNps)
-        localPlayer:SetAttribute("GCStrainDecay", State.strainDecayRate)
-        localPlayer:SetAttribute("GCJackWeight", State.jackStrainWeight)
-        -- Dynamic Missing Based on Difficulty (DMBOD)
-        localPlayer:SetAttribute("GCCDmbod", State.dmbod)
-        localPlayer:SetAttribute("GCDmbodMaxMiss", State.dmbodMaxMissPct)
-        -- Watcher
-        localPlayer:SetAttribute("GCCWatcherActive", State.watcherEnabled)
-        localPlayer:SetAttribute("GCC_W_SessionActive", State.sessionActive)
-    end)
+	pcall(function()
+		localPlayer:SetAttribute("GCCAP", State.autoplay)
+		localPlayer:SetAttribute("GCCMechanics", State.mechanics)
+		localPlayer:SetAttribute("GCCMechanicInterval", State.mechanicInterval)
+		localPlayer:SetAttribute("GCCHoldMs", math.floor(State.holdTime * 1000))
+		localPlayer:SetAttribute("GCCDodge", State.dodge)
+		localPlayer:SetAttribute("GCCSide", State.autoSide)
+		localPlayer:SetAttribute("GCCAlive", isAlive())
+		localPlayer:SetAttribute("GCCRunId", runId)
+		-- Timing & Accuracy
+		localPlayer:SetAttribute("GCCSickPct", State.sickPct)
+		localPlayer:SetAttribute("GCCGoodPct", State.goodPct)
+		localPlayer:SetAttribute("GCCOkPct", State.okPct)
+		localPlayer:SetAttribute("GCCBadPct", State.badPct)
+		localPlayer:SetAttribute("GCCMissPct", State.missPct)
+		localPlayer:SetAttribute("GCCMissCooldown", State.missCooldown)
+		localPlayer:SetAttribute("GCCSickMaxOffset", State.sickMaxOffsetMs)
+		-- Dynamic Accuracy Scaling (DAS)
+		localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
+		localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
+		localPlayer:SetAttribute("GCSparseMs", State.sparseThresholdMs)
+		localPlayer:SetAttribute("GCComfortNps", State.comfortNps)
+		localPlayer:SetAttribute("GCHardNps", State.hardNps)
+		localPlayer:SetAttribute("GCPenaltyPct", State.strainPenaltyPct)
+		-- Extended DAS
+		localPlayer:SetAttribute("GCSpamMinNps", State.spamMinNps)
+		localPlayer:SetAttribute("GCStrainDecay", State.strainDecayRate)
+		localPlayer:SetAttribute("GCJackWeight", State.jackStrainWeight)
+		-- Dynamic Missing Based on Difficulty (DMBOD)
+		localPlayer:SetAttribute("GCCDmbod", State.dmbod)
+		localPlayer:SetAttribute("GCDmbodMaxMiss", State.dmbodMaxMissPct)
+		-- Watcher
+		localPlayer:SetAttribute("GCCWatcherActive", State.watcherEnabled)
+		localPlayer:SetAttribute("GCC_W_SessionActive", State.sessionActive)
+	end)
 end
 
 local function releaseAll()
-    pcall(function()
-        localPlayer:SetAttribute("GCCReleaseAll",
-            (tonumber(localPlayer:GetAttribute("GCCReleaseAll")) or 0) + 1)
-    end)
+	pcall(function()
+		localPlayer:SetAttribute("GCCReleaseAll", (tonumber(localPlayer:GetAttribute("GCCReleaseAll")) or 0) + 1)
+	end)
 end
 
 -- ------------------------------------------------------------ HIGH-PERFORMANCE ACTOR INJECTION
 
 local function injectActor()
-    if State.actorInjected then
-        return localPlayer:GetAttribute("GCCFW") == true
-    end
-    if type(run_on_actor) ~= "function" then return false end
+	if State.actorInjected then
+		return localPlayer:GetAttribute("GCCFW") == true
+	end
+	if type(run_on_actor) ~= "function" then
+		return false
+	end
 
-    local ps = localPlayer:FindFirstChild("PlayerScripts")
-    local actor = ps and (ps:FindFirstChild("ClientActor") or ps:FindFirstChildWhichIsA("Actor"))
-    if not actor then return false end
+	local ps = localPlayer:FindFirstChild("PlayerScripts")
+	local actor = ps and (ps:FindFirstChild("ClientActor") or ps:FindFirstChildWhichIsA("Actor"))
+	if not actor then
+		return false
+	end
 
-    State.actorInjected = true
-    syncFlags()
+	State.actorInjected = true
+	syncFlags()
 
-    run_on_actor(actor, [=[
+	run_on_actor(
+		actor,
+		[=[
         local Players = game:GetService("Players")
         local LP = Players.LocalPlayer
         local RS = game:GetService("RunService")
@@ -767,12 +794,19 @@ local function injectActor()
             return (type(t) == "number") and t or nil
         end
 
-        local function laneFromValue(p, count)
+        local function laneFromValue(p, count, isZeroBased)
             count = count or 4
             p = tonumber(p)
             if not p then return nil end
-            if p >= 1 and p <= count then return p end
-            if p >= 0 and p < count then return p + 1 end
+
+            if isZeroBased then
+                return (math_floor(p) % count) + 1
+            end
+
+            if p >= 1 and p <= count then 
+                return math_floor(p) 
+            end
+    
             return (math_floor(p) % count) + 1
         end
 
@@ -1368,9 +1402,10 @@ local function injectActor()
                 activeField = nil
             end
         end)
-    ]=])
+    ]=]
+	)
 
-    return true
+	return true
 end
 
 -- ------------------------------------------------------------ MAIN PROCESS MONITOR
@@ -1378,62 +1413,70 @@ end
 local Main = { stepErrors = 0 }
 
 function Main.step()
-    local now = os.clock()
-    local gameUI, fields = GameUI.get(now)
-    local inGame = (gameUI and gameUI.Visible and fields and fields.Visible) == true
+	local now = os.clock()
+	local gameUI, fields = GameUI.get(now)
+	local inGame = (gameUI and gameUI.Visible and fields and fields.Visible) == true
 
-    if inGame and not State.inMatch then
-        State.inMatch = true
-        Side.update()
-        syncFlags()
-        if not State.actorInjected then
-            pcall(injectActor)
-        end
-    elseif not inGame and State.inMatch then
-        State.inMatch = false
-        releaseAll()
-    end
+	if inGame and not State.inMatch then
+		State.inMatch = true
+		Side.update()
+		syncFlags()
+		if not State.actorInjected then
+			pcall(injectActor)
+		end
+	elseif not inGame and State.inMatch then
+		State.inMatch = false
+		releaseAll()
+	end
 end
 
 function Main.start()
-    local nextStepAt = 0
+	local nextStepAt = 0
 
-    track(runService.Heartbeat:Connect(function()
-        local now = os.clock()
-        if now < nextStepAt then return end
-        nextStepAt = now + Tune.stepInterval
+	track(runService.Heartbeat:Connect(function()
+		local now = os.clock()
+		if now < nextStepAt then
+			return
+		end
+		nextStepAt = now + Tune.stepInterval
 
-        local ok = pcall(Main.step)
-        if ok then
-            Main.stepErrors = 0
-        else
-            Main.stepErrors = Main.stepErrors + 1
-            if Main.stepErrors >= Tune.maxStepErrors then
-                Main.stepErrors = 0
-                pcall(function()
-                    localPlayer:SetAttribute("GCCAP", false)
-                    localPlayer:SetAttribute("GCCAlive", false)
-                end)
-                releaseAll()
-            end
-        end
-    end))
+		local ok = pcall(Main.step)
+		if ok then
+			Main.stepErrors = 0
+		else
+			Main.stepErrors = Main.stepErrors + 1
+			if Main.stepErrors >= Tune.maxStepErrors then
+				Main.stepErrors = 0
+				pcall(function()
+					localPlayer:SetAttribute("GCCAP", false)
+					localPlayer:SetAttribute("GCCAlive", false)
+				end)
+				releaseAll()
+			end
+		end
+	end))
 
-    task.spawn(function()
-        while isAlive() do
-            task.wait(Tune.sideRefresh)
-            if State.inMatch then Side.update() end
-        end
-    end)
+	task.spawn(function()
+		while isAlive() do
+			task.wait(Tune.sideRefresh)
+			if State.inMatch then
+				Side.update()
+			end
+		end
+	end)
 
-    task.spawn(function()
-        for _ = 1, Tune.actorRetries do
-            if not isAlive() then return end
-            if State.actorInjected then return end
-            pcall(injectActor)
-            task.wait(1.0)
-        end
-    end)
+	task.spawn(function()
+		for _ = 1, Tune.actorRetries do
+			if not isAlive() then
+				return
+			end
+			if State.actorInjected then
+				return
+			end
+			pcall(injectActor)
+			task.wait(1.0)
+		end
+	end)
 end
 
 -- ------------------------------------------------------------ UI CONSTRUCTION
@@ -1444,306 +1487,308 @@ local uiElements = {}
 mainTab:CreateSection({ name = "AUTOPLAY", icon = "eye" })
 
 uiElements.autoplay = mainTab:CreateToggle({
-    name = "Enable Autoplay",
-    flag = "Yvetzal_FF_Enabled",
-    value = State.autoplay,
-    callback = function(v)
-        State.autoplay = v
-        syncFlags()
-        if not v then releaseAll() end
-    end,
+	name = "Enable Autoplay",
+	flag = "Yvetzal_FF_Enabled",
+	value = State.autoplay,
+	callback = function(v)
+		State.autoplay = v
+		syncFlags()
+		if not v then
+			releaseAll()
+		end
+	end,
 })
 
 uiElements.dodge = mainTab:CreateToggle({
-    name = "Dodge Death / Poison",
-    flag = "Yvetzal_FF_Dodge",
-    value = State.dodge,
-    callback = function(v)
-        State.dodge = v
-        syncFlags()
-    end,
+	name = "Dodge Death / Poison",
+	flag = "Yvetzal_FF_Dodge",
+	value = State.dodge,
+	callback = function(v)
+		State.dodge = v
+		syncFlags()
+	end,
 })
 
 uiElements.mechanics = mainTab:CreateToggle({
-    name = "Auto Mechanics (RESIST)",
-    flag = "Yvetzal_FF_Mechanics",
-    value = State.mechanics,
-    callback = function(v)
-        State.mechanics = v
-        syncFlags()
-    end,
+	name = "Auto Mechanics (RESIST)",
+	flag = "Yvetzal_FF_Mechanics",
+	value = State.mechanics,
+	callback = function(v)
+		State.mechanics = v
+		syncFlags()
+	end,
 })
 
 uiElements.sideMode = mainTab:CreateDropdown({
-    name = "Side",
-    flag = "Yvetzal_FF_Side",
-    options = { "Auto", "Left", "Right" },
-    value = State.sideMode,
-    callback = function(v)
-        State.sideMode = v
-        Side.update()
-        syncFlags()
-    end,
+	name = "Side",
+	flag = "Yvetzal_FF_Side",
+	options = { "Auto", "Left", "Right" },
+	value = State.sideMode,
+	callback = function(v)
+		State.sideMode = v
+		Side.update()
+		syncFlags()
+	end,
 })
 
 -- 2. DYNAMIC ACCURACY TAB
 mainTab:CreateSection({ name = "DYNAMIC ACCURACY & DMBOD", icon = "crosshair" })
 
 uiElements.dynamicAccuracy = mainTab:CreateToggle({
-    name = "Dynamic Accuracy Scaling (DAS)",
-    flag = "Yvetzal_FF_DynAcc",
-    value = State.dynamicAccuracy,
-    callback = function(v)
-        State.dynamicAccuracy = v
-        syncFlags()
-    end,
+	name = "Dynamic Accuracy Scaling (DAS)",
+	flag = "Yvetzal_FF_DynAcc",
+	value = State.dynamicAccuracy,
+	callback = function(v)
+		State.dynamicAccuracy = v
+		syncFlags()
+	end,
 })
 
 uiElements.dmbod = mainTab:CreateToggle({
-    name = "Dynamic Missing (DMBOD)",
-    flag = "Yvetzal_FF_Dmbod",
-    value = State.dmbod,
-    callback = function(v)
-        State.dmbod = v
-        syncFlags()
-    end,
+	name = "Dynamic Missing (DMBOD)",
+	flag = "Yvetzal_FF_Dmbod",
+	value = State.dmbod,
+	callback = function(v)
+		State.dmbod = v
+		syncFlags()
+	end,
 })
 
 uiElements.comfortNps = mainTab:CreateSlider({
-    name = "Comfort NPS Threshold",
-    flag = "Yvetzal_FF_ComfortNps",
-    range = { 2, 20 },
-    value = State.comfortNps,
-    increment = 1,
-    suffix = " NPS",
-    callback = function(v)
-        State.comfortNps = v
-        syncFlags()
-    end,
+	name = "Comfort NPS Threshold",
+	flag = "Yvetzal_FF_ComfortNps",
+	range = { 2, 20 },
+	value = State.comfortNps,
+	increment = 1,
+	suffix = " NPS",
+	callback = function(v)
+		State.comfortNps = v
+		syncFlags()
+	end,
 })
 
 uiElements.hardNps = mainTab:CreateSlider({
-    name = "Hard NPS Threshold",
-    flag = "Yvetzal_FF_HardNps",
-    range = { 8, 35 },
-    value = State.hardNps,
-    increment = 1,
-    suffix = " NPS",
-    callback = function(v)
-        State.hardNps = v
-        syncFlags()
-    end,
+	name = "Hard NPS Threshold",
+	flag = "Yvetzal_FF_HardNps",
+	range = { 8, 35 },
+	value = State.hardNps,
+	increment = 1,
+	suffix = " NPS",
+	callback = function(v)
+		State.hardNps = v
+		syncFlags()
+	end,
 })
 
 uiElements.denseThresholdMs = mainTab:CreateSlider({
-    name = "Dense Threshold (Burst/Spam)",
-    flag = "Yvetzal_FF_DenseMs",
-    range = { 10, 200 },
-    value = State.denseThresholdMs,
-    increment = 5,
-    suffix = " ms",
-    callback = function(v)
-        State.denseThresholdMs = v
-        syncFlags()
-    end,
+	name = "Dense Threshold (Burst/Spam)",
+	flag = "Yvetzal_FF_DenseMs",
+	range = { 10, 200 },
+	value = State.denseThresholdMs,
+	increment = 5,
+	suffix = " ms",
+	callback = function(v)
+		State.denseThresholdMs = v
+		syncFlags()
+	end,
 })
 
 uiElements.sparseThresholdMs = mainTab:CreateSlider({
-    name = "Sparse Threshold (Neutral Zone)",
-    flag = "Yvetzal_FF_SparseMs",
-    range = { 100, 500 },
-    value = State.sparseThresholdMs,
-    increment = 10,
-    suffix = " ms",
-    callback = function(v)
-        State.sparseThresholdMs = v
-        syncFlags()
-    end,
+	name = "Sparse Threshold (Neutral Zone)",
+	flag = "Yvetzal_FF_SparseMs",
+	range = { 100, 500 },
+	value = State.sparseThresholdMs,
+	increment = 10,
+	suffix = " ms",
+	callback = function(v)
+		State.sparseThresholdMs = v
+		syncFlags()
+	end,
 })
 
 uiElements.spamMinNps = mainTab:CreateSlider({
-    name = "Spam Density Floor",
-    flag = "Yvetzal_FF_SpamMinNps",
-    range = { 4, 25 },
-    value = State.spamMinNps,
-    increment = 1,
-    suffix = " NPS",
-    callback = function(v)
-        State.spamMinNps = v
-        syncFlags()
-    end,
+	name = "Spam Density Floor",
+	flag = "Yvetzal_FF_SpamMinNps",
+	range = { 4, 25 },
+	value = State.spamMinNps,
+	increment = 1,
+	suffix = " NPS",
+	callback = function(v)
+		State.spamMinNps = v
+		syncFlags()
+	end,
 })
 
 uiElements.strainDecayRate = mainTab:CreateSlider({
-    name = "Strain Decay Rate (Fatigue Recovery)",
-    flag = "Yvetzal_FF_StrainDecay",
-    range = { 0.5, 5.0 },
-    value = State.strainDecayRate,
-    increment = 0.5,
-    suffix = "x",
-    callback = function(v)
-        State.strainDecayRate = v
-        syncFlags()
-    end,
+	name = "Strain Decay Rate (Fatigue Recovery)",
+	flag = "Yvetzal_FF_StrainDecay",
+	range = { 0.5, 5.0 },
+	value = State.strainDecayRate,
+	increment = 0.5,
+	suffix = "x",
+	callback = function(v)
+		State.strainDecayRate = v
+		syncFlags()
+	end,
 })
 
 uiElements.jackStrainWeight = mainTab:CreateSlider({
-    name = "Jack Strain Weight",
-    flag = "Yvetzal_FF_JackWeight",
-    range = { 0.05, 0.50 },
-    value = State.jackStrainWeight,
-    increment = 0.05,
-    suffix = " ratio",
-    callback = function(v)
-        State.jackStrainWeight = v
-        syncFlags()
-    end,
+	name = "Jack Strain Weight",
+	flag = "Yvetzal_FF_JackWeight",
+	range = { 0.05, 0.50 },
+	value = State.jackStrainWeight,
+	increment = 0.05,
+	suffix = " ratio",
+	callback = function(v)
+		State.jackStrainWeight = v
+		syncFlags()
+	end,
 })
 
 uiElements.dmbodMaxMissPct = mainTab:CreateSlider({
-    name = "DMBOD Max Miss Chance",
-    flag = "Yvetzal_FF_DmbodMaxMiss",
-    range = { 1, 25 },
-    value = State.dmbodMaxMissPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.dmbodMaxMissPct = v
-        syncFlags()
-    end,
+	name = "DMBOD Max Miss Chance",
+	flag = "Yvetzal_FF_DmbodMaxMiss",
+	range = { 1, 25 },
+	value = State.dmbodMaxMissPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.dmbodMaxMissPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.strainPenaltyPct = mainTab:CreateSlider({
-    name = "Strain Accuracy Penalty",
-    flag = "Yvetzal_FF_StrainPenalty",
-    range = { 0, 80 },
-    value = State.strainPenaltyPct,
-    increment = 5,
-    suffix = " %",
-    callback = function(v)
-        State.strainPenaltyPct = v
-        syncFlags()
-    end,
+	name = "Strain Accuracy Penalty",
+	flag = "Yvetzal_FF_StrainPenalty",
+	range = { 0, 80 },
+	value = State.strainPenaltyPct,
+	increment = 5,
+	suffix = " %",
+	callback = function(v)
+		State.strainPenaltyPct = v
+		syncFlags()
+	end,
 })
 
 -- 3. BASE ACCURACY & TIMING
 mainTab:CreateSection({ name = "BASE ACCURACY & TIMING", icon = "palette" })
 
 uiElements.sickMaxOffsetMs = mainTab:CreateSlider({
-    name = "Sick Max Spread (±ms)",
-    flag = "Yvetzal_FF_SickMaxSpread",
-    range = { 5, 30 },
-    value = State.sickMaxOffsetMs,
-    increment = 1,
-    suffix = " ms",
-    callback = function(v)
-        State.sickMaxOffsetMs = v
-        syncFlags()
-    end,
+	name = "Sick Max Spread (±ms)",
+	flag = "Yvetzal_FF_SickMaxSpread",
+	range = { 5, 30 },
+	value = State.sickMaxOffsetMs,
+	increment = 1,
+	suffix = " ms",
+	callback = function(v)
+		State.sickMaxOffsetMs = v
+		syncFlags()
+	end,
 })
 
 uiElements.sickPct = mainTab:CreateSlider({
-    name = "Sick Base Chance",
-    flag = "Yvetzal_FF_SickPct",
-    range = { 0, 100 },
-    value = State.sickPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.sickPct = v
-        syncFlags()
-    end,
+	name = "Sick Base Chance",
+	flag = "Yvetzal_FF_SickPct",
+	range = { 0, 100 },
+	value = State.sickPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.sickPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.goodPct = mainTab:CreateSlider({
-    name = "Good Base Chance",
-    flag = "Yvetzal_FF_GoodPct",
-    range = { 0, 100 },
-    value = State.goodPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.goodPct = v
-        syncFlags()
-    end,
+	name = "Good Base Chance",
+	flag = "Yvetzal_FF_GoodPct",
+	range = { 0, 100 },
+	value = State.goodPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.goodPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.okPct = mainTab:CreateSlider({
-    name = "Ok Base Chance",
-    flag = "Yvetzal_FF_OkPct",
-    range = { 0, 100 },
-    value = State.okPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.okPct = v
-        syncFlags()
-    end,
+	name = "Ok Base Chance",
+	flag = "Yvetzal_FF_OkPct",
+	range = { 0, 100 },
+	value = State.okPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.okPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.badPct = mainTab:CreateSlider({
-    name = "Bad Base Chance",
-    flag = "Yvetzal_FF_BadPct",
-    range = { 0, 100 },
-    value = State.badPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.badPct = v
-        syncFlags()
-    end,
+	name = "Bad Base Chance",
+	flag = "Yvetzal_FF_BadPct",
+	range = { 0, 100 },
+	value = State.badPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.badPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.missPct = mainTab:CreateSlider({
-    name = "Static Miss Chance (Non-DMBOD)",
-    flag = "Yvetzal_FF_MissPct",
-    range = { 0, 100 },
-    value = State.missPct,
-    increment = 1,
-    suffix = " %",
-    callback = function(v)
-        State.missPct = v
-        syncFlags()
-    end,
+	name = "Static Miss Chance (Non-DMBOD)",
+	flag = "Yvetzal_FF_MissPct",
+	range = { 0, 100 },
+	value = State.missPct,
+	increment = 1,
+	suffix = " %",
+	callback = function(v)
+		State.missPct = v
+		syncFlags()
+	end,
 })
 
 uiElements.missCooldown = mainTab:CreateSlider({
-    name = "Miss Recovery Delay (Cooldown)",
-    flag = "Yvetzal_FF_MissCooldown",
-    range = { 0.5, 15 },
-    value = State.missCooldown,
-    increment = 0.5,
-    suffix = " s",
-    callback = function(v)
-        State.missCooldown = v
-        syncFlags()
-    end,
+	name = "Miss Recovery Delay (Cooldown)",
+	flag = "Yvetzal_FF_MissCooldown",
+	range = { 0.5, 15 },
+	value = State.missCooldown,
+	increment = 0.5,
+	suffix = " s",
+	callback = function(v)
+		State.missCooldown = v
+		syncFlags()
+	end,
 })
 
 uiElements.holdTime = mainTab:CreateSlider({
-    name = "Hold Window",
-    flag = "Yvetzal_FF_HoldMs",
-    range = { 30, 300 },
-    value = math.floor(State.holdTime * 1000),
-    increment = 5,
-    suffix = " ms",
-    callback = function(v)
-        State.holdTime = v * 0.001
-        syncFlags()
-    end,
+	name = "Hold Window",
+	flag = "Yvetzal_FF_HoldMs",
+	range = { 30, 300 },
+	value = math.floor(State.holdTime * 1000),
+	increment = 5,
+	suffix = " ms",
+	callback = function(v)
+		State.holdTime = v * 0.001
+		syncFlags()
+	end,
 })
 
 uiElements.mechanicInterval = mainTab:CreateSlider({
-    name = "Mechanic Interval",
-    flag = "Yvetzal_FF_MechInterval",
-    range = { 0.01, 0.2 },
-    value = State.mechanicInterval,
-    increment = 0.01,
-    suffix = " s",
-    callback = function(v)
-        State.mechanicInterval = v
-        syncFlags()
-    end,
+	name = "Mechanic Interval",
+	flag = "Yvetzal_FF_MechInterval",
+	range = { 0.01, 0.2 },
+	value = State.mechanicInterval,
+	increment = 0.01,
+	suffix = " s",
+	callback = function(v)
+		State.mechanicInterval = v
+		syncFlags()
+	end,
 })
 
 -- 4. WATCHER TAB
@@ -1752,58 +1797,58 @@ watcherTab:CreateSection({ name = "WATCHER TELEMETRY", icon = "eye" })
 local watcherLabels = {}
 
 uiElements.watcherToggle = watcherTab:CreateToggle({
-    name = "Enable Watcher Monitoring",
-    flag = "Yvetzal_FF_WatcherEnabled",
-    value = State.watcherEnabled,
-    callback = function(v)
-        State.watcherEnabled = v
-        syncFlags()
-    end,
+	name = "Enable Watcher Monitoring",
+	flag = "Yvetzal_FF_WatcherEnabled",
+	value = State.watcherEnabled,
+	callback = function(v)
+		State.watcherEnabled = v
+		syncFlags()
+	end,
 })
 
 watcherTab:CreateButton({
-    name = "Toggle Telemetry Recording",
-    callback = function()
-        State.sessionActive = not State.sessionActive
-        if State.sessionActive then
-            State.sessionStartTime = os.clock()
-            localPlayer:SetAttribute("GCC_W_SessionActive", true)
-            window:Notify({
-                title = "Telemetry",
-                content = "Session recording started",
-                icon = iconAsset("crosshair"),
-                duration = 2.0,
-            })
-        else
-            localPlayer:SetAttribute("GCC_W_SessionActive", false)
-            window:Notify({
-                title = "Telemetry",
-                content = "Session recording paused",
-                icon = iconAsset("settings"),
-                duration = 2.0,
-            })
-        end
-        syncFlags()
-    end,
+	name = "Toggle Telemetry Recording",
+	callback = function()
+		State.sessionActive = not State.sessionActive
+		if State.sessionActive then
+			State.sessionStartTime = os.clock()
+			localPlayer:SetAttribute("GCC_W_SessionActive", true)
+			window:Notify({
+				title = "Telemetry",
+				content = "Session recording started",
+				icon = iconAsset("crosshair"),
+				duration = 2.0,
+			})
+		else
+			localPlayer:SetAttribute("GCC_W_SessionActive", false)
+			window:Notify({
+				title = "Telemetry",
+				content = "Session recording paused",
+				icon = iconAsset("settings"),
+				duration = 2.0,
+			})
+		end
+		syncFlags()
+	end,
 })
 
 watcherTab:CreateButton({
-    name = "Stop & Reset Telemetry Data",
-    callback = function()
-        State.sessionActive = false
-        State.sessionStartTime = 0
-        syncFlags()
-        pcall(function()
-            localPlayer:SetAttribute("GCC_W_SessionActive", false)
-            localPlayer:SetAttribute("GCCWatcherReset", os.clock())
-        end)
-        window:Notify({
-            title = "Watcher",
-            content = "Telemetry data cleared successfully",
-            icon = iconAsset("crosshair"),
-            duration = 2.5,
-        })
-    end,
+	name = "Stop & Reset Telemetry Data",
+	callback = function()
+		State.sessionActive = false
+		State.sessionStartTime = 0
+		syncFlags()
+		pcall(function()
+			localPlayer:SetAttribute("GCC_W_SessionActive", false)
+			localPlayer:SetAttribute("GCCWatcherReset", os.clock())
+		end)
+		window:Notify({
+			title = "Watcher",
+			content = "Telemetry data cleared successfully",
+			icon = iconAsset("crosshair"),
+			duration = 2.5,
+		})
+	end,
 })
 
 watcherLabels.sessionStatus = createTextItem(watcherTab, "Session Timer & Status", "Standby")
@@ -1813,192 +1858,268 @@ watcherLabels.diagnostics = createTextItem(watcherTab, "Real-Time Engine Diagnos
 
 -- Telemetry Render Loop (150ms throttle to prevent thread starvation)
 task.spawn(function()
-    while isAlive() do
-        task.wait(0.15)
-        if State.watcherEnabled then
-            pcall(function()
-                local totalNotes = tonumber(localPlayer:GetAttribute("GCC_W_TotalNotes")) or 0
-                local distinctNotes = tonumber(localPlayer:GetAttribute("GCC_W_DistinctNotes")) or 0
-                local duration = tonumber(localPlayer:GetAttribute("GCC_W_Duration")) or 0
-                local meanNps = tonumber(localPlayer:GetAttribute("GCC_W_MeanNPS")) or 0
-                local meanDelta = tonumber(localPlayer:GetAttribute("GCC_W_MeanDeltaMs")) or 0
-                local rollingNps = tonumber(localPlayer:GetAttribute("GCC_W_RollingNPS")) or 0
-                local peakNps = tonumber(localPlayer:GetAttribute("GCC_W_PeakNPS")) or 0
+	while isAlive() do
+		task.wait(0.15)
+		if State.watcherEnabled then
+			pcall(function()
+				local totalNotes = tonumber(localPlayer:GetAttribute("GCC_W_TotalNotes")) or 0
+				local distinctNotes = tonumber(localPlayer:GetAttribute("GCC_W_DistinctNotes")) or 0
+				local duration = tonumber(localPlayer:GetAttribute("GCC_W_Duration")) or 0
+				local meanNps = tonumber(localPlayer:GetAttribute("GCC_W_MeanNPS")) or 0
+				local meanDelta = tonumber(localPlayer:GetAttribute("GCC_W_MeanDeltaMs")) or 0
+				local rollingNps = tonumber(localPlayer:GetAttribute("GCC_W_RollingNPS")) or 0
+				local peakNps = tonumber(localPlayer:GetAttribute("GCC_W_PeakNPS")) or 0
 
-                local primaryTier = localPlayer:GetAttribute("GCC_W_PrimaryTier") or "NORMAL"
-                local pNormal = tonumber(localPlayer:GetAttribute("GCC_W_PctNormal")) or 0
-                local pHard = tonumber(localPlayer:GetAttribute("GCC_W_PctHard")) or 0
-                local pInsane = tonumber(localPlayer:GetAttribute("GCC_W_PctInsane")) or 0
-                local pMania = tonumber(localPlayer:GetAttribute("GCC_W_PctMania")) or 0
-                local pLunatic = tonumber(localPlayer:GetAttribute("GCC_W_PctLunatic")) or 0
-                local pImpossible = tonumber(localPlayer:GetAttribute("GCC_W_PctImpossible")) or 0
+				local primaryTier = localPlayer:GetAttribute("GCC_W_PrimaryTier") or "NORMAL"
+				local pNormal = tonumber(localPlayer:GetAttribute("GCC_W_PctNormal")) or 0
+				local pHard = tonumber(localPlayer:GetAttribute("GCC_W_PctHard")) or 0
+				local pInsane = tonumber(localPlayer:GetAttribute("GCC_W_PctInsane")) or 0
+				local pMania = tonumber(localPlayer:GetAttribute("GCC_W_PctMania")) or 0
+				local pLunatic = tonumber(localPlayer:GetAttribute("GCC_W_PctLunatic")) or 0
+				local pImpossible = tonumber(localPlayer:GetAttribute("GCC_W_PctImpossible")) or 0
 
-                local isSpam = localPlayer:GetAttribute("GCC_W_Spam") == true
-                local comfort = localPlayer:GetAttribute("GCC_W_Comfort") or "COMFORTABLE"
-                local dasCount = tonumber(localPlayer:GetAttribute("GCC_W_DasCount")) or 0
-                local dmbodCount = tonumber(localPlayer:GetAttribute("GCC_W_DmbodCount")) or 0
-                local totalMisses = tonumber(localPlayer:GetAttribute("GCC_W_TotalMissCount")) or 0
-                local missRate = math.floor((tonumber(localPlayer:GetAttribute("GCC_W_MissRate")) or 0) + 0.5)
+				local isSpam = localPlayer:GetAttribute("GCC_W_Spam") == true
+				local comfort = localPlayer:GetAttribute("GCC_W_Comfort") or "COMFORTABLE"
+				local dasCount = tonumber(localPlayer:GetAttribute("GCC_W_DasCount")) or 0
+				local dmbodCount = tonumber(localPlayer:GetAttribute("GCC_W_DmbodCount")) or 0
+				local totalMisses = tonumber(localPlayer:GetAttribute("GCC_W_TotalMissCount")) or 0
+				local missRate = math.floor((tonumber(localPlayer:GetAttribute("GCC_W_MissRate")) or 0) + 0.5)
 
-                local strainPct = tonumber(localPlayer:GetAttribute("GCC_W_StrainPct")) or 0
-                local jackStrainPct = tonumber(localPlayer:GetAttribute("GCC_W_JackStrainPct")) or 0
-                local diffIndex = tonumber(localPlayer:GetAttribute("GCC_W_DiffIndex")) or 0
-                local avgOffsetMs = tonumber(localPlayer:GetAttribute("GCC_W_AvgOffsetMs")) or 0
+				local strainPct = tonumber(localPlayer:GetAttribute("GCC_W_StrainPct")) or 0
+				local jackStrainPct = tonumber(localPlayer:GetAttribute("GCC_W_JackStrainPct")) or 0
+				local diffIndex = tonumber(localPlayer:GetAttribute("GCC_W_DiffIndex")) or 0
+				local avgOffsetMs = tonumber(localPlayer:GetAttribute("GCC_W_AvgOffsetMs")) or 0
 
-                if watcherLabels.sessionStatus then
-                    local elapsed = (State.sessionActive and State.sessionStartTime > 0)
-                        and (os.clock() - State.sessionStartTime)
-                        or duration
-                    watcherLabels.sessionStatus:Set({
-                        Title = "Session Timer & Status",
-                        Content = string.format("Status: %s\nElapsed: %.1f s\nTotal Notes: %d (Distinct Steps: %d)",
-                            State.sessionActive and "RECORDING (Live)" or "STANDBY (Idle)",
-                            elapsed, totalNotes, distinctNotes
-                        ),
-                    })
-                end
+				if watcherLabels.sessionStatus then
+					local elapsed = (State.sessionActive and State.sessionStartTime > 0)
+							and (os.clock() - State.sessionStartTime)
+						or duration
+					watcherLabels.sessionStatus:Set({
+						Title = "Session Timer & Status",
+						Content = string.format(
+							"Status: %s\nElapsed: %.1f s\nTotal Notes: %d (Distinct Steps: %d)",
+							State.sessionActive and "RECORDING (Live)" or "STANDBY (Idle)",
+							elapsed,
+							totalNotes,
+							distinctNotes
+						),
+					})
+				end
 
-                if watcherLabels.chartOverview then
-                    watcherLabels.chartOverview:Set({
-                        Title = "Chart Overview",
-                        Content = string.format("Duration: %.1f s\nMean NPS: %.2f\nMean Gap: %.1f ms\nPeak NPS: %.2f\nRolling NPS: %.2f",
-                            duration, meanNps, meanDelta, peakNps, rollingNps
-                        ),
-                    })
-                end
+				if watcherLabels.chartOverview then
+					watcherLabels.chartOverview:Set({
+						Title = "Chart Overview",
+						Content = string.format(
+							"Duration: %.1f s\nMean NPS: %.2f\nMean Gap: %.1f ms\nPeak NPS: %.2f\nRolling NPS: %.2f",
+							duration,
+							meanNps,
+							meanDelta,
+							peakNps,
+							rollingNps
+						),
+					})
+				end
 
-                if watcherLabels.difficultyBreakdown then
-                    watcherLabels.difficultyBreakdown:Set({
-                        Title = "Difficulty Profile",
-                        Content = string.format("Primary Tier: %s\n\n• Normal: %.1f%%\n• Hard: %.1f%%\n• Insane: %.1f%%\n• Mania: %.1f%%\n• Lunatic: %.1f%%\n• Impossible: %.1f%%",
-                            primaryTier, pNormal, pHard, pInsane, pMania, pLunatic, pImpossible
-                        ),
-                    })
-                end
+				if watcherLabels.difficultyBreakdown then
+					watcherLabels.difficultyBreakdown:Set({
+						Title = "Difficulty Profile",
+						Content = string.format(
+							"Primary Tier: %s\n\n• Normal: %.1f%%\n• Hard: %.1f%%\n• Insane: %.1f%%\n• Mania: %.1f%%\n• Lunatic: %.1f%%\n• Impossible: %.1f%%",
+							primaryTier,
+							pNormal,
+							pHard,
+							pInsane,
+							pMania,
+							pLunatic,
+							pImpossible
+						),
+					})
+				end
 
-                if watcherLabels.diagnostics then
-                    local spamText = isSpam and "SPAM STREAM" or "NORMAL STREAM"
-                    watcherLabels.diagnostics:Set({
-                        Title = "Real-Time Engine Diagnostics",
-                        Content = string.format(
-                            "NPS: %.1f / Comfort: %d / Hard: %d\nStream: %s\nFatigue: %s (%d%%)\nJack Strain: %d%%\nDiff Index: %.2f\nMiss Rate: %d%%\nTiming Spread: ±%.1f ms\nDAS Hits: %d | DMBOD: %d | Total Misses: %d",
-                            rollingNps, State.comfortNps, State.hardNps,
-                            spamText, tostring(comfort), strainPct, jackStrainPct,
-                            diffIndex, missRate, avgOffsetMs,
-                            dasCount, dmbodCount, totalMisses
-                        ),
-                    })
-                end
-            end)
-        end
-    end
+				if watcherLabels.diagnostics then
+					local spamText = isSpam and "SPAM STREAM" or "NORMAL STREAM"
+					watcherLabels.diagnostics:Set({
+						Title = "Real-Time Engine Diagnostics",
+						Content = string.format(
+							"NPS: %.1f / Comfort: %d / Hard: %d\nStream: %s\nFatigue: %s (%d%%)\nJack Strain: %d%%\nDiff Index: %.2f\nMiss Rate: %d%%\nTiming Spread: ±%.1f ms\nDAS Hits: %d | DMBOD: %d | Total Misses: %d",
+							rollingNps,
+							State.comfortNps,
+							State.hardNps,
+							spamText,
+							tostring(comfort),
+							strainPct,
+							jackStrainPct,
+							diffIndex,
+							missRate,
+							avgOffsetMs,
+							dasCount,
+							dmbodCount,
+							totalMisses
+						),
+					})
+				end
+			end)
+		end
+	end
 end)
 
 -- 5. SETTINGS TAB
 settingsTab:CreateSection({ name = "CONFIG MANAGEMENT", icon = "settings" })
 
 local function syncUIWithState()
-    pcall(function()
-        if uiElements.autoplay then uiElements.autoplay:Set(State.autoplay) end
-        if uiElements.dodge then uiElements.dodge:Set(State.dodge) end
-        if uiElements.mechanics then uiElements.mechanics:Set(State.mechanics) end
-        if uiElements.sideMode then uiElements.sideMode:Set(State.sideMode) end
-        if uiElements.dynamicAccuracy then uiElements.dynamicAccuracy:Set(State.dynamicAccuracy) end
-        if uiElements.dmbod then uiElements.dmbod:Set(State.dmbod) end
-        if uiElements.comfortNps then uiElements.comfortNps:Set(State.comfortNps) end
-        if uiElements.hardNps then uiElements.hardNps:Set(State.hardNps) end
-        if uiElements.denseThresholdMs then uiElements.denseThresholdMs:Set(State.denseThresholdMs) end
-        if uiElements.sparseThresholdMs then uiElements.sparseThresholdMs:Set(State.sparseThresholdMs) end
-        if uiElements.spamMinNps then uiElements.spamMinNps:Set(State.spamMinNps) end
-        if uiElements.strainDecayRate then uiElements.strainDecayRate:Set(State.strainDecayRate) end
-        if uiElements.jackStrainWeight then uiElements.jackStrainWeight:Set(State.jackStrainWeight) end
-        if uiElements.dmbodMaxMissPct then uiElements.dmbodMaxMissPct:Set(State.dmbodMaxMissPct) end
-        if uiElements.strainPenaltyPct then uiElements.strainPenaltyPct:Set(State.strainPenaltyPct) end
-        if uiElements.sickMaxOffsetMs then uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs) end
-        if uiElements.sickPct then uiElements.sickPct:Set(State.sickPct) end
-        if uiElements.goodPct then uiElements.goodPct:Set(State.goodPct) end
-        if uiElements.okPct then uiElements.okPct:Set(State.okPct) end
-        if uiElements.badPct then uiElements.badPct:Set(State.badPct) end
-        if uiElements.missPct then uiElements.missPct:Set(State.missPct) end
-        if uiElements.missCooldown then uiElements.missCooldown:Set(State.missCooldown) end
-        if uiElements.holdTime then uiElements.holdTime:Set(math.floor(State.holdTime * 1000)) end
-        if uiElements.mechanicInterval then uiElements.mechanicInterval:Set(State.mechanicInterval) end
-        if uiElements.watcherToggle then uiElements.watcherToggle:Set(State.watcherEnabled) end
-    end)
+	pcall(function()
+		if uiElements.autoplay then
+			uiElements.autoplay:Set(State.autoplay)
+		end
+		if uiElements.dodge then
+			uiElements.dodge:Set(State.dodge)
+		end
+		if uiElements.mechanics then
+			uiElements.mechanics:Set(State.mechanics)
+		end
+		if uiElements.sideMode then
+			uiElements.sideMode:Set(State.sideMode)
+		end
+		if uiElements.dynamicAccuracy then
+			uiElements.dynamicAccuracy:Set(State.dynamicAccuracy)
+		end
+		if uiElements.dmbod then
+			uiElements.dmbod:Set(State.dmbod)
+		end
+		if uiElements.comfortNps then
+			uiElements.comfortNps:Set(State.comfortNps)
+		end
+		if uiElements.hardNps then
+			uiElements.hardNps:Set(State.hardNps)
+		end
+		if uiElements.denseThresholdMs then
+			uiElements.denseThresholdMs:Set(State.denseThresholdMs)
+		end
+		if uiElements.sparseThresholdMs then
+			uiElements.sparseThresholdMs:Set(State.sparseThresholdMs)
+		end
+		if uiElements.spamMinNps then
+			uiElements.spamMinNps:Set(State.spamMinNps)
+		end
+		if uiElements.strainDecayRate then
+			uiElements.strainDecayRate:Set(State.strainDecayRate)
+		end
+		if uiElements.jackStrainWeight then
+			uiElements.jackStrainWeight:Set(State.jackStrainWeight)
+		end
+		if uiElements.dmbodMaxMissPct then
+			uiElements.dmbodMaxMissPct:Set(State.dmbodMaxMissPct)
+		end
+		if uiElements.strainPenaltyPct then
+			uiElements.strainPenaltyPct:Set(State.strainPenaltyPct)
+		end
+		if uiElements.sickMaxOffsetMs then
+			uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs)
+		end
+		if uiElements.sickPct then
+			uiElements.sickPct:Set(State.sickPct)
+		end
+		if uiElements.goodPct then
+			uiElements.goodPct:Set(State.goodPct)
+		end
+		if uiElements.okPct then
+			uiElements.okPct:Set(State.okPct)
+		end
+		if uiElements.badPct then
+			uiElements.badPct:Set(State.badPct)
+		end
+		if uiElements.missPct then
+			uiElements.missPct:Set(State.missPct)
+		end
+		if uiElements.missCooldown then
+			uiElements.missCooldown:Set(State.missCooldown)
+		end
+		if uiElements.holdTime then
+			uiElements.holdTime:Set(math.floor(State.holdTime * 1000))
+		end
+		if uiElements.mechanicInterval then
+			uiElements.mechanicInterval:Set(State.mechanicInterval)
+		end
+		if uiElements.watcherToggle then
+			uiElements.watcherToggle:Set(State.watcherEnabled)
+		end
+	end)
 end
 
 settingsTab:CreateButton({
-    name = "Save Configuration",
-    callback = function()
-        saveConfig()
-        window:Notify({
-            title = "Configuration",
-            content = "Config saved to " .. CONFIG_FILE,
-            icon = iconAsset("settings"),
-            duration = 3,
-        })
-    end,
+	name = "Save Configuration",
+	callback = function()
+		saveConfig()
+		window:Notify({
+			title = "Configuration",
+			content = "Config saved to " .. CONFIG_FILE,
+			icon = iconAsset("settings"),
+			duration = 3,
+		})
+	end,
 })
 
 settingsTab:CreateButton({
-    name = "Reload Configuration",
-    callback = function()
-        if loadConfig() then
-            syncUIWithState()
-            syncFlags()
-            window:Notify({
-                title = "Configuration",
-                content = "Config successfully loaded",
-                icon = iconAsset("settings"),
-                duration = 3,
-            })
-        else
-            window:Notify({
-                title = "Configuration",
-                content = "No saved configuration file found",
-                icon = iconAsset("settings"),
-                duration = 3,
-            })
-        end
-    end,
+	name = "Reload Configuration",
+	callback = function()
+		if loadConfig() then
+			syncUIWithState()
+			syncFlags()
+			window:Notify({
+				title = "Configuration",
+				content = "Config successfully loaded",
+				icon = iconAsset("settings"),
+				duration = 3,
+			})
+		else
+			window:Notify({
+				title = "Configuration",
+				content = "No saved configuration file found",
+				icon = iconAsset("settings"),
+				duration = 3,
+			})
+		end
+	end,
 })
 
 settingsTab:CreateButton({
-    name = "Reset to Defaults (Pro 4K Preset)",
-    callback = function()
-        for k, v in pairs(DefaultConfig) do
-            State[k] = v
-        end
-        saveConfig()
-        syncUIWithState()
-        syncFlags()
-        window:Notify({
-            title = "Configuration",
-            content = "Reset to Pro 4K Player defaults",
-            icon = iconAsset("settings"),
-            duration = 3,
-        })
-    end,
+	name = "Reset to Defaults (Pro 4K Preset)",
+	callback = function()
+		for k, v in pairs(DefaultConfig) do
+			State[k] = v
+		end
+		saveConfig()
+		syncUIWithState()
+		syncFlags()
+		window:Notify({
+			title = "Configuration",
+			content = "Reset to Pro 4K Player defaults",
+			icon = iconAsset("settings"),
+			duration = 3,
+		})
+	end,
 })
 
 settingsTab:CreateSection({ name = "SCRIPT CONTROLS", icon = "settings" })
 
 settingsTab:CreateButton({
-    name = "Re-inject Actor",
-    callback = function()
-        State.actorInjected = false
-        pcall(function() localPlayer:SetAttribute("GCCFW", false) end)
-        pcall(injectActor)
-    end,
+	name = "Re-inject Actor",
+	callback = function()
+		State.actorInjected = false
+		pcall(function()
+			localPlayer:SetAttribute("GCCFW", false)
+		end)
+		pcall(injectActor)
+	end,
 })
 
 settingsTab:CreateButton({
-    name = "Unload Funky Friday",
-    callback = function()
-        if state.stop then
-            state.stop()
-        end
-    end,
+	name = "Unload Funky Friday",
+	callback = function()
+		if state.stop then
+			state.stop()
+		end
+	end,
 })
 
 -- ------------------------------------------------------------ TEARDOWN & INITIALIZATION
@@ -2006,81 +2127,85 @@ settingsTab:CreateButton({
 shared.YvetzalFunkyFriday = state
 
 local function cleanup()
-    if not state.alive then return end
-    state.alive = false
+	if not state.alive then
+		return
+	end
+	state.alive = false
 
-    saveConfig()
-    shared.YvetzalFunkyFridayToken = nil
-    releaseAll()
+	saveConfig()
+	shared.YvetzalFunkyFridayToken = nil
+	releaseAll()
 
-    for _, conn in ipairs(connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    table.clear(connections)
+	for _, conn in ipairs(connections) do
+		pcall(function()
+			conn:Disconnect()
+		end)
+	end
+	table.clear(connections)
 
-    pcall(function()
-        localPlayer:SetAttribute("GCCAP", false)
-        localPlayer:SetAttribute("GCCMechanics", false)
-        localPlayer:SetAttribute("GCCMechanicInterval", nil)
-        localPlayer:SetAttribute("GCCAlive", false)
-        localPlayer:SetAttribute("GCCFW", false)
-        localPlayer:SetAttribute("GCCFWKind", nil)
-        localPlayer:SetAttribute("GCCHitLane", nil)
-        localPlayer:SetAttribute("GCCSide", nil)
-        localPlayer:SetAttribute("GCCRunId", nil)
-        localPlayer:SetAttribute("GCCHoldMs", nil)
-        localPlayer:SetAttribute("GCCDodge", nil)
-        localPlayer:SetAttribute("GCCSickPct", nil)
-        localPlayer:SetAttribute("GCCGoodPct", nil)
-        localPlayer:SetAttribute("GCCOkPct", nil)
-        localPlayer:SetAttribute("GCCBadPct", nil)
-        localPlayer:SetAttribute("GCCMissPct", nil)
-        localPlayer:SetAttribute("GCCMissCooldown", nil)
-        localPlayer:SetAttribute("GCCSickMaxOffset", nil)
-        localPlayer:SetAttribute("GCCDynAcc", nil)
-        localPlayer:SetAttribute("GCDenseMs", nil)
-        localPlayer:SetAttribute("GCSparseMs", nil)
-        localPlayer:SetAttribute("GCComfortNps", nil)
-        localPlayer:SetAttribute("GCHardNps", nil)
-        localPlayer:SetAttribute("GCPenaltyPct", nil)
-        localPlayer:SetAttribute("GCSpamMinNps", nil)
-        localPlayer:SetAttribute("GCStrainDecay", nil)
-        localPlayer:SetAttribute("GCJackWeight", nil)
-        localPlayer:SetAttribute("GCCDmbod", nil)
-        localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
-        localPlayer:SetAttribute("GCCWatcherActive", nil)
-        localPlayer:SetAttribute("GCC_W_SessionActive", nil)
-        localPlayer:SetAttribute("GCCWatcherReset", nil)
-        localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
-        localPlayer:SetAttribute("GCC_W_DistinctNotes", nil)
-        localPlayer:SetAttribute("GCC_W_Duration", nil)
-        localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
-        localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
-        localPlayer:SetAttribute("GCC_W_PrimaryTier", nil)
-        localPlayer:SetAttribute("GCC_W_PctNormal", nil)
-        localPlayer:SetAttribute("GCC_W_PctHard", nil)
-        localPlayer:SetAttribute("GCC_W_PctInsane", nil)
-        localPlayer:SetAttribute("GCC_W_PctMania", nil)
-        localPlayer:SetAttribute("GCC_W_PctLunatic", nil)
-        localPlayer:SetAttribute("GCC_W_PctImpossible", nil)
-        localPlayer:SetAttribute("GCC_W_RollingNPS", nil)
-        localPlayer:SetAttribute("GCC_W_PeakNPS", nil)
-        localPlayer:SetAttribute("GCC_W_Spam", nil)
-        localPlayer:SetAttribute("GCC_W_Comfort", nil)
-        localPlayer:SetAttribute("GCC_W_DasCount", nil)
-        localPlayer:SetAttribute("GCC_W_DmbodCount", nil)
-        localPlayer:SetAttribute("GCC_W_TotalMissCount", nil)
-        localPlayer:SetAttribute("GCC_W_MissRate", nil)
-        localPlayer:SetAttribute("GCC_W_StrainPct", nil)
-        localPlayer:SetAttribute("GCC_W_JackStrainPct", nil)
-        localPlayer:SetAttribute("GCC_W_DiffIndex", nil)
-        localPlayer:SetAttribute("GCC_W_AvgOffsetMs", nil)
-    end)
+	pcall(function()
+		localPlayer:SetAttribute("GCCAP", false)
+		localPlayer:SetAttribute("GCCMechanics", false)
+		localPlayer:SetAttribute("GCCMechanicInterval", nil)
+		localPlayer:SetAttribute("GCCAlive", false)
+		localPlayer:SetAttribute("GCCFW", false)
+		localPlayer:SetAttribute("GCCFWKind", nil)
+		localPlayer:SetAttribute("GCCHitLane", nil)
+		localPlayer:SetAttribute("GCCSide", nil)
+		localPlayer:SetAttribute("GCCRunId", nil)
+		localPlayer:SetAttribute("GCCHoldMs", nil)
+		localPlayer:SetAttribute("GCCDodge", nil)
+		localPlayer:SetAttribute("GCCSickPct", nil)
+		localPlayer:SetAttribute("GCCGoodPct", nil)
+		localPlayer:SetAttribute("GCCOkPct", nil)
+		localPlayer:SetAttribute("GCCBadPct", nil)
+		localPlayer:SetAttribute("GCCMissPct", nil)
+		localPlayer:SetAttribute("GCCMissCooldown", nil)
+		localPlayer:SetAttribute("GCCSickMaxOffset", nil)
+		localPlayer:SetAttribute("GCCDynAcc", nil)
+		localPlayer:SetAttribute("GCDenseMs", nil)
+		localPlayer:SetAttribute("GCSparseMs", nil)
+		localPlayer:SetAttribute("GCComfortNps", nil)
+		localPlayer:SetAttribute("GCHardNps", nil)
+		localPlayer:SetAttribute("GCPenaltyPct", nil)
+		localPlayer:SetAttribute("GCSpamMinNps", nil)
+		localPlayer:SetAttribute("GCStrainDecay", nil)
+		localPlayer:SetAttribute("GCJackWeight", nil)
+		localPlayer:SetAttribute("GCCDmbod", nil)
+		localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
+		localPlayer:SetAttribute("GCCWatcherActive", nil)
+		localPlayer:SetAttribute("GCC_W_SessionActive", nil)
+		localPlayer:SetAttribute("GCCWatcherReset", nil)
+		localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
+		localPlayer:SetAttribute("GCC_W_DistinctNotes", nil)
+		localPlayer:SetAttribute("GCC_W_Duration", nil)
+		localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
+		localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
+		localPlayer:SetAttribute("GCC_W_PrimaryTier", nil)
+		localPlayer:SetAttribute("GCC_W_PctNormal", nil)
+		localPlayer:SetAttribute("GCC_W_PctHard", nil)
+		localPlayer:SetAttribute("GCC_W_PctInsane", nil)
+		localPlayer:SetAttribute("GCC_W_PctMania", nil)
+		localPlayer:SetAttribute("GCC_W_PctLunatic", nil)
+		localPlayer:SetAttribute("GCC_W_PctImpossible", nil)
+		localPlayer:SetAttribute("GCC_W_RollingNPS", nil)
+		localPlayer:SetAttribute("GCC_W_PeakNPS", nil)
+		localPlayer:SetAttribute("GCC_W_Spam", nil)
+		localPlayer:SetAttribute("GCC_W_Comfort", nil)
+		localPlayer:SetAttribute("GCC_W_DasCount", nil)
+		localPlayer:SetAttribute("GCC_W_DmbodCount", nil)
+		localPlayer:SetAttribute("GCC_W_TotalMissCount", nil)
+		localPlayer:SetAttribute("GCC_W_MissRate", nil)
+		localPlayer:SetAttribute("GCC_W_StrainPct", nil)
+		localPlayer:SetAttribute("GCC_W_JackStrainPct", nil)
+		localPlayer:SetAttribute("GCC_W_DiffIndex", nil)
+		localPlayer:SetAttribute("GCC_W_AvgOffsetMs", nil)
+	end)
 
-    if shared.YvetzalFunkyFriday == state then
-        shared.YvetzalFunkyFriday = nil
-    end
-    shared.YvetzalFunkyFridayCleanup = nil
+	if shared.YvetzalFunkyFriday == state then
+		shared.YvetzalFunkyFriday = nil
+	end
+	shared.YvetzalFunkyFridayCleanup = nil
 end
 
 shared.YvetzalFunkyFridayCleanup = cleanup
@@ -2088,19 +2213,19 @@ state.stop = cleanup
 
 local originalUnload = window.Unload
 window.Unload = function(self)
-    cleanup()
-    if type(originalUnload) == "function" then
-        return originalUnload(self)
-    end
-    return nil
+	cleanup()
+	if type(originalUnload) == "function" then
+		return originalUnload(self)
+	end
+	return nil
 end
 
 Main.start()
 syncFlags()
 
 window:Notify({
-    title = "Yvetzal",
-    content = "Zero-Allocation High-Performance Engine Loaded",
-    icon = iconAsset("flame"),
-    duration = 3,
+	title = "Yvetzal",
+	content = "Zero-Allocation High-Performance Engine Loaded",
+	icon = iconAsset("flame"),
+	duration = 3,
 })
