@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized DAS v4 & Adaptive DMBOD + Watcher Telemetry Engine v2)
+-- Yvetzal: Funky Friday Autoplay (Optimized DAS v4.5 & Multivariate DMBOD + Watcher Telemetry Engine v2.5)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -37,7 +37,7 @@ local DefaultConfig = {
     missPct = 0,
     missCooldown = 4.0,
     sickMaxOffsetMs = 18,
-    -- Dynamic Accuracy Scaling (DAS v4)
+    -- Dynamic Accuracy Scaling (DAS v4.5)
     dynamicAccuracy = true,
     denseThresholdMs = 45,
     sparseThresholdMs = 240,
@@ -48,7 +48,7 @@ local DefaultConfig = {
     spamMinNps = 9,
     strainDecayRate = 2.0,
     jackStrainWeight = 0.20,
-    -- Dynamic Missing Based on Difficulty (DMBOD v4)
+    -- Dynamic Missing Based on Difficulty (DMBOD v4.5)
     dmbod = true,
     dmbodMaxMissPct = 5,
     -- Watcher Engine
@@ -181,7 +181,7 @@ end
 
 local window = rayfield:CreateWindow({
     name = "Yvetzal",
-    subtitle = "FUNKY FRIDAY AUTOPLAY & WATCHER v2",
+    subtitle = "FUNKY FRIDAY AUTOPLAY & WATCHER v2.5",
     icon = iconAsset("flame"),
     showName = "Yvetzal",
     showIcon = iconAsset("flame"),
@@ -467,6 +467,7 @@ local function injectActor()
 
         local lastMechanicAction
         local lastMechanicDispatch = 0
+        local nextMechanicDispatchTime = 0
         local mechanicCentered = false
         local nextSearchAt = 0
         local cachedPlayerGui
@@ -482,13 +483,14 @@ local function injectActor()
         local nextMissAllowedAt = 0
 
         -- ------------------------------------------------------------
-        -- CUMULATIVE & RUNTIME DIFFICULTY ENGINE
+        -- CUMULATIVE & RUNTIME DIFFICULTY ENGINE (MULTIVARIATE)
         -- ------------------------------------------------------------
         local lastGlobalNoteTime = 0
         local lastDistinctNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
-        -- Monotonic NPS Ring Buffer (Window: 1.25s)
+        -- Monotonic Distinct Rhythmic Step NPS Ring Buffer (Window: 1.25s)
+        -- IMPROVEMENT 1 & 2: Stores distinct rhythmic event timestamps (chord-compressed)
         local NPS_WINDOW = 1.25
         local RING_SIZE = 128
         local npsRing = table.create(RING_SIZE, 0)
@@ -512,8 +514,9 @@ local function injectActor()
         local currentDynamicMissRate = 0
         local nextTelemetrySyncAt = 0
 
-        -- Cumulative Chart Metrics Cache
+        -- Cumulative Chart Metrics Cache (Chord-Compressed Steps)
         local sessionNoteTimes = {}
+        local sessionDistinctTimes = {}
         local sessionSeenArrows = {}
         local sessionFirstNoteT = nil
         local sessionLastNoteT = nil
@@ -600,6 +603,7 @@ local function injectActor()
             timingOffsetCount = 0
 
             table.clear(sessionNoteTimes)
+            table.clear(sessionDistinctTimes)
             table.clear(sessionSeenArrows)
             sessionFirstNoteT = nil
             sessionLastNoteT = nil
@@ -615,6 +619,7 @@ local function injectActor()
 
             pcall(function()
                 LP:SetAttribute("GCC_W_TotalNotes", 0)
+                LP:SetAttribute("GCC_W_DistinctNotes", 0)
                 LP:SetAttribute("GCC_W_Duration", 0)
                 LP:SetAttribute("GCC_W_MeanNPS", 0)
                 LP:SetAttribute("GCC_W_MeanDeltaMs", 0)
@@ -791,10 +796,14 @@ local function injectActor()
             return noteTime - songTime
         end
 
+        -- IMPROVEMENT 3 & 4: Zero-centered symmetric Gaussian offset for SICK bracket
+        -- Constrained strictly to math_min(maxWindowSec, 0.050)
         local function gaussianOffset(maxWindowSec)
+            local effectiveCap = math_min(maxWindowSec, 0.050) -- Strict 50ms cap for SICK
+            -- Irwin-Hall approximation for zero-centered normal distribution
             local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
-            local offset = z * (maxWindowSec * 0.33)
-            return math_clamp(offset, -maxWindowSec, maxWindowSec)
+            local offset = z * (effectiveCap * 0.33)
+            return math_clamp(offset, -effectiveCap, effectiveCap)
         end
 
         local function shouldHit(arrow, diff, dt, targetOffset)
@@ -870,6 +879,7 @@ local function injectActor()
             end
         end
 
+        -- IMPROVEMENT 1: Chord-compressed distinct rhythmic step registration
         local function registerNoteTelemetry(arrow, nTime)
             if not attr.sessionActive or not attr.watcherActive then return end
             local noteKey = arrow.Index or (arrow.NoteData and arrow.NoteData.Index) or arrow
@@ -884,28 +894,35 @@ local function injectActor()
                 sessionLastNoteT = nTime
             end
 
-            local c = #sessionNoteTimes
-            if c > 1 then
-                local prevT = sessionNoteTimes[c - 1]
-                local dtSec = math_abs(nTime - prevT)
-                if dtSec > 0.003 then
-                    local dtMs = dtSec * 1000
-                    sumDeltaMs = sumDeltaMs + dtMs
-                    validDeltaCount = validDeltaCount + 1
+            -- Chord Compression: Check if this note forms a chord with the most recent rhythmic event
+            local distinctCount = #sessionDistinctTimes
+            local isChordStep = (distinctCount > 0) and (math_abs(nTime - sessionDistinctTimes[distinctCount]) <= 0.015)
 
-                    local localNps = 1000.0 / dtMs
-                    if localNps < 4 or dtMs > 250 then
-                        tierCounts.Normal = tierCounts.Normal + 1
-                    elseif localNps <= 7 or dtMs > 142 then
-                        tierCounts.Hard = tierCounts.Hard + 1
-                    elseif localNps <= 11 or dtMs > 90 then
-                        tierCounts.Insane = tierCounts.Insane + 1
-                    elseif localNps <= 16 or dtMs > 62.5 then
-                        tierCounts.Mania = tierCounts.Mania + 1
-                    elseif localNps <= 22 or dtMs > 45 then
-                        tierCounts.Lunatic = tierCounts.Lunatic + 1
-                    else
-                        tierCounts.Impossible = tierCounts.Impossible + 1
+            if not isChordStep then
+                sessionDistinctTimes[distinctCount + 1] = nTime
+                if distinctCount >= 1 then
+                    local prevT = sessionDistinctTimes[distinctCount]
+                    local dtSec = nTime - prevT
+                    if dtSec > 0.015 then
+                        local dtMs = dtSec * 1000
+                        sumDeltaMs = sumDeltaMs + dtMs
+                        validDeltaCount = validDeltaCount + 1
+
+                        -- Categorize chart tier by true rhythmic step frequency
+                        local stepNps = 1000.0 / dtMs
+                        if stepNps < 4 or dtMs > 250 then
+                            tierCounts.Normal = tierCounts.Normal + 1
+                        elseif stepNps <= 7 or dtMs > 142 then
+                            tierCounts.Hard = tierCounts.Hard + 1
+                        elseif stepNps <= 11 or dtMs > 90 then
+                            tierCounts.Insane = tierCounts.Insane + 1
+                        elseif stepNps <= 16 or dtMs > 62.5 then
+                            tierCounts.Mania = tierCounts.Mania + 1
+                        elseif stepNps <= 22 or dtMs > 45 then
+                            tierCounts.Lunatic = tierCounts.Lunatic + 1
+                        else
+                            tierCounts.Impossible = tierCounts.Impossible + 1
+                        end
                     end
                 end
             end
@@ -1039,19 +1056,23 @@ local function injectActor()
             end
 
             -- ------------------------------------------------------------
-            -- DAS v4 & DMBOD & REAL-TIME ENGINE
+            -- DAS v4.5 & DMBOD & REAL-TIME ENGINE (CHORD-AWARE)
             -- ------------------------------------------------------------
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.22 then
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
                 local dtLane = (lastLaneT > 0) and (nTime - lastLaneT) or 1.0
-                local isChord = (lastGlobalNoteTime > 0) and (math_abs(nTime - lastGlobalNoteTime) <= 0.014)
 
-                -- 1. Rolling Density & Burst NPS Ring Buffer
-                npsRing[ringHead] = nTime
-                ringHead = (ringHead % RING_SIZE) + 1
-                if ringCount < RING_SIZE then
-                    ringCount = ringCount + 1
+                -- IMPROVEMENT 2: Determine if this note is part of a concurrent chord (≤15ms)
+                local isChord = (lastDistinctNoteTime > 0) and (math_abs(nTime - lastDistinctNoteTime) <= 0.015)
+
+                -- 1. Rolling Density & Burst NPS Ring Buffer (distinct rhythmic steps only)
+                if not isChord then
+                    npsRing[ringHead] = nTime
+                    ringHead = (ringHead % RING_SIZE) + 1
+                    if ringCount < RING_SIZE then
+                        ringCount = ringCount + 1
+                    end
                 end
 
                 local activeDensityCount = 0
@@ -1073,7 +1094,7 @@ local function injectActor()
                     currentPeakNPS = effectiveNPS
                 end
 
-                -- Dual-Condition Spam Detection
+                -- Dual-Condition Spam Detection: only triggers on true rapid streams, not slow chords
                 currentSpam = ((dtInter * 1000) < attr.denseMs) and (rollingNPS >= attr.spamMinNps)
 
                 -- 2. Exponential Strain & Fatigue Accumulator with Configurable Decay
@@ -1088,6 +1109,7 @@ local function injectActor()
                 local comfortNps = attr.comfortNps
                 local hardNps = math_max(comfortNps + 2, attr.hardNps)
 
+                -- Only distinct non-chord events or genuine high-frequency streams increase strain
                 if effectiveNPS > comfortNps and not isChord then
                     local densityOverhead = (effectiveNPS - comfortNps) / (hardNps - comfortNps)
                     accumulatedStrain = math_clamp(accumulatedStrain + (densityOverhead * 0.12), 0.0, 1.0)
@@ -1101,7 +1123,7 @@ local function injectActor()
                     currentComfort = "COMFORTABLE"
                 end
 
-                -- 3. Lane Jack Fatigue
+                -- 3. Lane Jack Fatigue: independent per-finger jack intervals
                 local jackStrain = 0.0
                 if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.012 then
                     jackStrain = math_clamp(1.0 - (dtLane / 0.22), 0.0, 1.0)
@@ -1123,7 +1145,7 @@ local function injectActor()
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- 4. Dynamic Missing (DMBOD v4)
+                -- 4. Dynamic Missing (DMBOD v4.5)
                 local currentMissPct = 0
                 if attr.dmbod then
                     local lowDiffBaseline = math_min(0.4, attr.dmbodMaxMiss * 0.08)
@@ -1134,7 +1156,7 @@ local function injectActor()
                 end
                 currentDynamicMissRate = currentMissPct
 
-                -- 5. Dynamic Accuracy Scaling (DAS v4)
+                -- 5. Dynamic Accuracy Scaling (DAS v4.5)
                 local curSick = attr.sickPct
                 local curGood = attr.goodPct
                 local curOk = attr.okPct
@@ -1166,19 +1188,29 @@ local function injectActor()
                 end
                 if cTotal <= 0 then cTotal = 100 end
 
+                -- IMPROVEMENT 3: Strict Judgement Windows & Boundary Clamping
+                -- Eliminates accidental misses caused by BAD random overshoot (> ±160ms)
                 local roll = math_random() * cTotal
                 if roll < cSick then
+                    -- SICK: 0ms to ±50ms (gaussian spread)
                     arrow._bybyTargetOffset = gaussianOffset(attr.sickMaxOffset)
                 elseif roll < cGood then
-                    local ms = math_random(48, 76)
-                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
+                    -- GOOD: ±51ms to ±100ms
+                    local ms = math_random(51, 100)
+                    local sign = (math_random() < 0.5) and -1 or 1
+                    arrow._bybyTargetOffset = (sign * ms) * 0.001
                 elseif roll < cOk then
-                    local ms = math_random(82, 118)
-                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
+                    -- OKAY: ±101ms to ±130ms
+                    local ms = math_random(101, 130)
+                    local sign = (math_random() < 0.5) and -1 or 1
+                    arrow._bybyTargetOffset = (sign * ms) * 0.001
                 elseif roll < cBad then
-                    local ms = math_random(125, 150)
-                    arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
+                    -- BAD: ±131ms to ±160ms (strictly clamped <= 160ms)
+                    local ms = math_random(131, 160)
+                    local sign = (math_random() < 0.5) and -1 or 1
+                    arrow._bybyTargetOffset = (sign * ms) * 0.001
                 else
+                    -- INTENTIONAL MISS: Dropped intentionally by roll or DMBOD
                     arrow._bybyMiss = true
                     dmbodTriggerCount = dmbodTriggerCount + 1
                     totalActualMissCount = totalActualMissCount + 1
@@ -1230,7 +1262,9 @@ local function injectActor()
 
             flushReleases(nowS)
 
-            -- Mechanics Check
+            -- ------------------------------------------------------------
+            -- AUTO MECHANICS CHECK (IMPROVEMENT 4: BIDIRECTIONAL JITTER)
+            -- ------------------------------------------------------------
             if attr.mechanics and attr.ap then
                 local mechanics = fwV.VSRG and fwV.VSRG.Mechanics
                 local actionController = mechanics and mechanics.Action
@@ -1240,6 +1274,7 @@ local function injectActor()
                     if activeAction ~= lastMechanicAction then
                         lastMechanicAction = activeAction
                         lastMechanicDispatch = 0
+                        nextMechanicDispatchTime = 0
                         mechanicCentered = false
                     end
 
@@ -1248,7 +1283,9 @@ local function injectActor()
                         local pivot = getPendulumPivot(nowS)
                         if pivot and pivot:IsA("GuiObject") and pivot.Visible then
                             dispatchedByPendulum = true
-                            local centered = math_abs(pivot.Rotation) <= 3
+                            -- Pendulum reaction jitter: ±0.8 degrees of variance around dead-center
+                            local centerThreshold = 3.0 + ((math_random() * 2 - 1) * 0.8)
+                            local centered = math_abs(pivot.Rotation) <= centerThreshold
                             if centered and not mechanicCentered then
                                 mechanicCentered = true
                                 if type(actionController.Dispatch) == "function" then
@@ -1262,8 +1299,12 @@ local function injectActor()
                         end
                     end
 
-                    if not dispatchedByPendulum and (nowS - lastMechanicDispatch >= attr.mechanicInterval) then
+                    -- Jittered dispatch interval: ±25% symmetric time jitter around configured interval
+                    if not dispatchedByPendulum and (nowS >= nextMechanicDispatchTime) then
                         lastMechanicDispatch = nowS
+                        local jitterDelta = (math_random() * 2 - 1) * (attr.mechanicInterval * 0.25)
+                        nextMechanicDispatchTime = nowS + math_max(0.015, attr.mechanicInterval + jitterDelta)
+
                         if type(actionController.Dispatch) == "function" then
                             pcall(actionController.Dispatch, actionController, activeAction)
                         elseif type(activeAction.Callback) == "function" then
@@ -1273,11 +1314,14 @@ local function injectActor()
                 else
                     lastMechanicAction = nil
                     lastMechanicDispatch = 0
+                    nextMechanicDispatchTime = 0
                     mechanicCentered = false
                 end
             end
 
-            -- Rhythm Notes Engine
+            -- ------------------------------------------------------------
+            -- RHYTHM NOTES ENGINE
+            -- ------------------------------------------------------------
             local field = fwV.VSRG and fwV.VSRG.GameHandler and fwV.VSRG.GameHandler.Field
             local gameObj = field and field.Game
 
@@ -1385,6 +1429,7 @@ local function injectActor()
 
                     -- Process Cumulative Chart Metrics
                     local totalNotes = #sessionNoteTimes
+                    local distinctNotes = #sessionDistinctTimes
                     local duration = 0
                     local meanNps = 0
                     local meanDelta = 0
@@ -1423,6 +1468,7 @@ local function injectActor()
 
                     pcall(function()
                         LP:SetAttribute("GCC_W_TotalNotes", totalNotes)
+                        LP:SetAttribute("GCC_W_DistinctNotes", distinctNotes)
                         LP:SetAttribute("GCC_W_Duration", duration)
                         LP:SetAttribute("GCC_W_MeanNPS", meanNps)
                         LP:SetAttribute("GCC_W_MeanDeltaMs", meanDelta)
@@ -1848,13 +1894,13 @@ local function resetWatcherUI()
         if watcherLabels.sessionStatus then
             watcherLabels.sessionStatus:Set({
                 Title = "Session Timer & Status",
-                Content = "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nData Packets: 0",
+                Content = "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nTotal Notes: 0 (Steps: 0)",
             })
         end
         if watcherLabels.chartOverview then
             watcherLabels.chartOverview:Set({
                 Title = "Chart Overview",
-                Content = "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
+                Content = "Total Notes: -- (Steps: --)\nChart Duration: -- s\nMean Average NPS: --\nMean Rhythmic Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
             })
         end
         if watcherLabels.difficultyBreakdown then
@@ -1925,7 +1971,7 @@ watcherTab:CreateSection({ name = "SESSION RECORDING", icon = "eye" })
 watcherLabels.sessionStatus = createTextItem(
     watcherTab,
     "Session Timer & Status",
-    "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nData Packets: 0"
+    "Telemetry State: STANDBY (Paused)\nSession Elapsed: 0.0 s\nTotal Notes: 0 (Steps: 0)"
 )
 
 watcherTab:CreateSection({ name = "CHART METRICS & AVERAGES", icon = "crosshair" })
@@ -1933,7 +1979,7 @@ watcherTab:CreateSection({ name = "CHART METRICS & AVERAGES", icon = "crosshair"
 watcherLabels.chartOverview = createTextItem(
     watcherTab,
     "Chart Overview",
-    "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --"
+    "Total Notes: -- (Steps: --)\nChart Duration: -- s\nMean Average NPS: --\nMean Rhythmic Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --"
 )
 
 watcherTab:CreateSection({ name = "DIFFICULTY BREAKDOWN", icon = "palette" })
@@ -1959,6 +2005,7 @@ task.spawn(function()
         if State.watcherEnabled then
             pcall(function()
                 local totalNotes = tonumber(localPlayer:GetAttribute("GCC_W_TotalNotes")) or 0
+                local distinctNotes = tonumber(localPlayer:GetAttribute("GCC_W_DistinctNotes")) or 0
                 local duration = tonumber(localPlayer:GetAttribute("GCC_W_Duration")) or 0
                 local meanNps = tonumber(localPlayer:GetAttribute("GCC_W_MeanNPS")) or 0
                 local meanDelta = tonumber(localPlayer:GetAttribute("GCC_W_MeanDeltaMs")) or 0
@@ -1993,10 +2040,11 @@ task.spawn(function()
                     watcherLabels.sessionStatus:Set({
                         Title = "Session Timer & Status",
                         Content = string.format(
-                            "Telemetry State: %s\nSession Elapsed: %.1f s\nTotal Notes Captured: %d",
+                            "Telemetry State: %s\nSession Elapsed: %.1f s\nTotal Notes: %d (Distinct Steps: %d)",
                             State.sessionActive and "RECORDING (Live)" or "STANDBY (Idle)",
                             elapsed,
-                            totalNotes
+                            totalNotes,
+                            distinctNotes
                         ),
                     })
                 end
@@ -2006,8 +2054,9 @@ task.spawn(function()
                     watcherLabels.chartOverview:Set({
                         Title = "Chart Overview",
                         Content = string.format(
-                            "Total Notes: %d\nChart Duration: %.1f s\nMean Average NPS: %.2f\nMean Inter-Note Gap: %.1f ms\nPeak Burst NPS: %.2f\nRolling Dynamic NPS: %.2f",
+                            "Total Notes: %d (Steps: %d)\nChart Duration: %.1f s\nMean Average NPS: %.2f\nMean Rhythmic Gap: %.1f ms\nPeak Burst NPS: %.2f\nRolling Dynamic NPS: %.2f",
                             totalNotes,
+                            distinctNotes,
                             duration,
                             meanNps,
                             meanDelta,
@@ -2036,7 +2085,7 @@ task.spawn(function()
 
                 -- Update Diagnostics Card
                 if watcherLabels.diagnostics then
-                    local spamText = isSpam and "SPAM DETECTED" or "NORMAL STREAM"
+                    local spamText = isSpam and "SPAM STREAM" or "NORMAL STREAM"
                     watcherLabels.diagnostics:Set({
                         Title = "Real-Time Engine Diagnostics",
                         Content = string.format(
@@ -2222,6 +2271,7 @@ local function cleanup()
         localPlayer:SetAttribute("GCC_W_SessionActive", nil)
         localPlayer:SetAttribute("GCCWatcherReset", nil)
         localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
+        localPlayer:SetAttribute("GCC_W_DistinctNotes", nil)
         localPlayer:SetAttribute("GCC_W_Duration", nil)
         localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
         localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
@@ -2271,7 +2321,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Loaded with Watcher Telemetry Engine v2, DAS v4 & DMBOD",
+    content = "Loaded with Watcher Telemetry Engine v2.5 (Chord Compression & DAS v4.5)",
     icon = iconAsset("crosshair"),
     duration = 4,
 })
