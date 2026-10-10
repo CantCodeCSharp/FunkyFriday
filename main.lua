@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized, DAS v2 & DMBOD Dynamic Difficulty)
+-- Yvetzal: Funky Friday Autoplay (Optimized, DAS v3 & Gated DMBOD)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -37,12 +37,12 @@ local DefaultConfig = {
     missPct = 0, -- Base miss stays 0; DMBOD handles dynamic misses
     missCooldown = 4.0,
     sickMaxOffsetMs = 18,
-    -- Dynamic Accuracy Scaling (DAS)
+    -- Dynamic Accuracy Scaling (DAS v3)
     dynamicAccuracy = true,
     denseThresholdMs = 45,
     sparseThresholdMs = 240,
     strainPenaltyPct = 40,
-    -- Dynamic Missing Based on Difficulty (DMBOD)
+    -- Dynamic Missing Based on Difficulty (DMBOD v3)
     dmbod = true,
     dmbodMaxMissPct = 5,
 }
@@ -335,6 +335,7 @@ local function injectActor()
         local math_max = math.max
         local math_clamp = math.clamp
         local math_floor = math.floor
+        local math_exp = math.exp
 
         local fwV
         local laneCount = 4
@@ -363,9 +364,22 @@ local function injectActor()
         local totalWeight = 100
         local nextMissAllowedAt = 0
 
-        -- Density tracking state (zero-allocation)
+        -- ------------------------------------------------------------
+        -- REFACTORED DAS v3 & DMBOD STATE ENGINE (ZERO-ALLOCATION)
+        -- ------------------------------------------------------------
         local lastGlobalNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+
+        -- Rolling Density / NPS Ring Buffer (Window: 1.5 seconds)
+        local NPS_WINDOW = 1.5
+        local RING_SIZE = 64
+        local npsRing = table.create(RING_SIZE, 0)
+        local ringHead = 1
+        local ringCount = 0
+
+        -- Continuous Strain & Fatigue Tracking
+        local accumulatedStrain = 0
+        local lastStrainUpdateTime = 0
 
         local attr = {
             runId = actorRunId,
@@ -738,53 +752,89 @@ local function injectActor()
             if not rawTime then return end
             local nTime = (rawTime > 1000 and scan.timepos < 500) and (rawTime * 0.001) or rawTime
 
-            -- Assign offset with DAS v2 & DMBOD
+            -- ------------------------------------------------------------
+            -- REFACTORED DAS v3 & GATED DMBOD
+            -- ------------------------------------------------------------
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss then
-                -- Inter-note interval strain calculations
-                local deltaGlobal = (lastGlobalNoteTime > 0) and math_abs(nTime - lastGlobalNoteTime) or 1.0
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
-                local deltaLane = (lastLaneT > 0) and math_abs(nTime - lastLaneT) or 1.0
+                local dtLane = (lastLaneT > 0) and math_abs(nTime - lastLaneT) or 1.0
 
-                local dtGlobalMs = deltaGlobal * 1000
-                local dtLaneMs = deltaLane * 1000
+                -- 1. Chord & Flam Suppression (<= 12 ms delta treated as simultaneous)
+                local isChord = (lastGlobalNoteTime > 0) and (math_abs(nTime - lastGlobalNoteTime) <= 0.012)
+                
+                -- 2. Rolling NPS Calculation via Circular Buffer
+                if not isChord then
+                    npsRing[ringHead] = nTime
+                    ringHead = (ringHead % RING_SIZE) + 1
+                    if ringCount < RING_SIZE then
+                        ringCount = ringCount + 1
+                    end
+                end
 
-                -- Update tracking state
-                lastGlobalNoteTime = nTime
+                local activeDensityCount = 0
+                for rIdx = 1, ringCount do
+                    local t = npsRing[rIdx]
+                    local deltaWindow = nTime - t
+                    if deltaWindow >= 0 and deltaWindow <= NPS_WINDOW then
+                        activeDensityCount = activeDensityCount + 1
+                    end
+                end
+                local localNPS = activeDensityCount / NPS_WINDOW
+
+                -- 3. Exponential Strain Accumulation & Decay Model
+                if lastStrainUpdateTime > 0 then
+                    local dtIdle = math_max(0, nTime - lastStrainUpdateTime)
+                    if dtIdle > 0 then
+                        -- Decay rate lambda = 2.5
+                        accumulatedStrain = accumulatedStrain * math_exp(-2.5 * dtIdle)
+                    end
+                end
+                lastStrainUpdateTime = nTime
+
+                -- Strain only builds if density exceeds human comfort floor (> 7.0 NPS)
+                if localNPS > 7.0 and not isChord then
+                    local npsOverhead = (localNPS - 7.0)
+                    accumulatedStrain = math_clamp(accumulatedStrain + (npsOverhead * 0.08), 0.0, 1.0)
+                end
+
+                -- 4. Lane Jack Fatigue Evaluation
+                local jackStrain = 0.0
+                if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.015 then
+                    jackStrain = math_clamp(1.0 - (dtLane / 0.22), 0.0, 1.0)
+                end
+                local effectiveStrain = math_clamp(accumulatedStrain + (jackStrain * 0.35), 0.0, 1.0)
+
+                -- Update timing anchors
+                if not isChord then
+                    lastGlobalNoteTime = nTime
+                end
                 if targetLaneIdx and targetLaneIdx >= 1 and targetLaneIdx <= 10 then
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- Compute stream strain and jack strain
-                local dDense = attr.denseMs
-                local dSparse = attr.sparseMs
-                local range = (dSparse > dDense) and (dSparse - dDense) or 1
-
-                local streamStrain = math_clamp(1.0 - ((dtGlobalMs - dDense) / range), 0.0, 1.0)
-                -- Same-lane jacks fatigue fingers faster
-                local jackStrain = (lastLaneT > 0) and math_clamp(1.0 - ((dtLaneMs - (dDense * 1.75)) / range), 0.0, 1.0) or 0.0
-                local effectiveStrain = math_max(streamStrain, jackStrain * 1.25)
-
-                -- Dynamic Missing Based on Difficulty (DMBOD)
+                -- 5. Gated DMBOD (Dynamic Missing)
                 local currentMissPct = 0
                 if attr.dmbod then
-                    -- If notes are sparse, miss chance is strictly overridden to 0%
-                    if dtGlobalMs >= dSparse then
-                        currentMissPct = 0
-                    else
+                    -- Absolute Gate: Hard lock to 0% misses unless BOTH conditions are met:
+                    -- (a) Sustained high rolling density (localNPS >= 9.0)
+                    -- (b) Elevated accumulated strain (effectiveStrain >= 0.35)
+                    if localNPS >= 9.0 and effectiveStrain >= 0.35 then
                         currentMissPct = effectiveStrain * attr.dmbodMaxMiss
+                    else
+                        currentMissPct = 0
                     end
                 else
                     currentMissPct = attr.missPct
                 end
 
-                -- Dynamic Accuracy Scaling (DAS)
+                -- 6. Humanized DAS (Dynamic Accuracy Scaling)
                 local curSick = attr.sickPct
                 local curGood = attr.goodPct
                 local curOk = attr.okPct
                 local curBad = attr.badPct
 
-                if attr.dynAcc and effectiveStrain > 0 then
+                if attr.dynAcc and effectiveStrain > 0.15 then
                     local penalty = effectiveStrain * (attr.penaltyPct * 0.01)
                     local shaved = curSick * penalty
                     curSick = curSick - shaved
@@ -938,6 +988,10 @@ local function injectActor()
                     sideBroken, sideBrokenSince = false, nil
                     lastGlobalNoteTime = 0
                     for l = 1, 10 do lastLaneNoteTime[l] = 0 end
+                    for r = 1, RING_SIZE do npsRing[r] = 0 end
+                    ringHead, ringCount = 1, 0
+                    accumulatedStrain = 0
+                    lastStrainUpdateTime = 0
                 elseif lastNoteCache ~= field.NoteCache then
                     lastNoteCache = field.NoteCache
                 end
@@ -1499,7 +1553,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Autoplay loaded with DAS v2 & DMBOD",
+    content = "Autoplay loaded with DAS v3 & Gated DMBOD",
     icon = iconAsset("crosshair"),
     duration = 4,
 })
