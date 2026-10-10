@@ -1,72 +1,177 @@
--- [[ Rscripts Risk Notice ]]
--- This script is not verified by rscripts.net. Deal with caution.
---
--- Stay safe:
---   • Never log in on unofficial Roblox sites or lookalike domains.
---   • Real Roblox links use roblox.com (check the .com ending).
---   • Treat fake Roblox login / "claim reward" pages as phishing.
--- [[ End Rscripts Risk Notice ]]
+-- Yvetzal: Funky Friday Autoplay (Cleaned & Fixed with Accuracy Windows)
 
--- YOU'RE USING A GOOD GAMING CHAIR Script
-
--- 1. BOOTSTRAP
-
-if getgenv().BybyHubCleanup then
-    pcall(getgenv().BybyHubCleanup)
+if not game:IsLoaded() then
+    game.Loaded:Wait()
 end
-if getgenv().GoodGammingChairCleanup then
-    pcall(getgenv().GoodGammingChairCleanup)
+
+local players = game:GetService("Players")
+local runService = game:GetService("RunService")
+local localPlayer = players.LocalPlayer
+local shared = type(getgenv) == "function" and getgenv() or _G
+
+-- Kill any prior instance (GCC or Yvetzal)
+if shared.GoodGammingChairCleanup then
+    pcall(shared.GoodGammingChairCleanup)
 end
+if shared.YvetzalFunkyFriday and shared.YvetzalFunkyFriday.stop then
+    pcall(shared.YvetzalFunkyFriday.stop)
+end
+
+local theme = {
+    WindowColor = ColorSequence.new(Color3.fromRGB(8, 8, 8), Color3.fromRGB(0, 0, 0)),
+    ShadowColor = Color3.fromRGB(0, 0, 0),
+    SurfaceStroke = Color3.fromRGB(120, 15, 15),
+    CornerRoundness = UDim.new(0, 8),
+    ElementCornerRadius = UDim.new(0, 6),
+    ContentColor = Color3.fromRGB(230, 230, 230),
+    TitlingColor = Color3.fromRGB(255, 255, 255),
+    ActionColor = Color3.fromRGB(255, 255, 255),
+    ElementTextHoverColor = Color3.fromRGB(255, 255, 255),
+    TabColor = Color3.fromRGB(255, 255, 255),
+    TabBackground = ColorSequence.new(Color3.fromRGB(22, 22, 22), Color3.fromRGB(8, 8, 8)),
+    TabStroke = ColorSequence.new(Color3.fromRGB(230, 30, 30), Color3.fromRGB(110, 10, 10)),
+    ElementGradient = ColorSequence.new(Color3.fromRGB(18, 18, 18), Color3.fromRGB(10, 10, 10)),
+    ElementStroke = Color3.fromRGB(60, 60, 60),
+    ElementStrokeHover = Color3.fromRGB(230, 40, 40),
+    StatBackground = Color3.fromRGB(30, 6, 6),
+    AccentColor = Color3.fromRGB(220, 25, 25),
+    AccentStroke = Color3.fromRGB(255, 70, 70),
+    SliderBackground = Color3.fromRGB(35, 35, 35),
+    SliderProgress = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(210, 210, 210)),
+    SliderHandle = Color3.fromRGB(255, 255, 255),
+    SliderStroke = Color3.fromRGB(60, 60, 60),
+    ToggleTrack = Color3.fromRGB(30, 30, 30),
+    ToggleKnobOff = Color3.fromRGB(220, 220, 220),
+    DropdownHighlight = Color3.fromRGB(180, 25, 25),
+    FieldBackground = Color3.fromRGB(14, 14, 14),
+    FieldGlow = Color3.fromRGB(120, 20, 20),
+    PlaceholderColor = Color3.fromRGB(150, 150, 150),
+    NeutralButton = Color3.fromRGB(26, 26, 26),
+    NeutralButtonHover = Color3.fromRGB(45, 45, 45),
+    NeutralButtonStroke = Color3.fromRGB(80, 15, 15),
+    ErrorColor = Color3.fromRGB(230, 40, 40),
+    ErrorStrokeColor = Color3.fromRGB(255, 90, 90),
+}
+
+local icons = {
+    ["box-select"] = { 16898612819, 820, 147 },
+    crosshair = { 16898613044, 453, 869 },
+    eye = { 16898613353, 771, 563 },
+    flame = { 16898613353, 967, 306 },
+    palette = { 16898613613, 453, 918 },
+    settings = { 16898613777, 771, 257 },
+}
+
+local function iconAsset(name)
+    local i = icons[name]
+    return i and ("rbxassetid://" .. i[1])
+end
+
+local function cropIcon(img, name)
+    local i = icons[name]
+    if img and i then
+        img.ImageRectSize = Vector2.new(48, 48)
+        img.ImageRectOffset = Vector2.new(i[2], i[3])
+    end
+end
+
+local rayfield
+local ok, err = pcall(function()
+    rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+end)
+if not ok or not rayfield then
+    warn("[Yvetzal] Rayfield Gen2 failed to load:", err)
+    return
+end
+
+local window = rayfield:CreateWindow({
+    name = "Yvetzal",
+    subtitle = "FUNKY FRIDAY AUTOPLAY",
+    icon = iconAsset("flame"),
+    showName = "Yvetzal",
+    showIcon = iconAsset("flame"),
+    sidebarLayout = true,
+    profile = "Infernum",
+    theme = theme,
+})
+cropIcon(window.topbarIcon, "flame")
+cropIcon(window.collapsedIcon, "flame")
+
+local function makeTab(name, icon)
+    local tab = window:CreateTab({ name = name, icon = iconAsset(icon) })
+    cropIcon(tab.topbarItemIcon, icon)
+    local createSection = tab.CreateSection
+    tab.CreateSection = function(self, props)
+        local sIcon = props.icon
+        props.icon = iconAsset(sIcon)
+        local section = createSection(self, props)
+        cropIcon(section.iconLabel, sIcon)
+        return section
+    end
+    return tab
+end
+
+local mainTab = makeTab("Autoplay", "eye")
+local settingsTab = makeTab("Settings", "settings")
+
+-- ------------------------------------------------------------ CORE STATE
+
+local Tune = {
+    sideRefresh   = 1.5,
+    stepInterval  = 0.10,
+    maxStepErrors = 30,
+    actorRetries  = 20,
+}
+
+local State = {
+    autoSide = "Left",
+    inMatch = false,
+    sideMode = "Auto",
+    autoplay = true,
+    dodge = true,
+    mechanics = true,
+    holdTime = 0.150,
+    mechanicInterval = 0.05,
+    actorInjected = false,
+    -- Accuracy & Timing Tiers
+    pureSick = false,
+    sickPct = 85,
+    goodPct = 10,
+    okPct = 5,
+    badPct = 0,
+    missPct = 0,
+}
 
 local runToken = {}
-getgenv().GoodGammingChairToken = runToken
+shared.YvetzalFunkyFridayToken = runToken
 local runId = tostring(runToken)
 
-local function IsAlive()
-    return getgenv().GoodGammingChairToken == runToken
+local function isAlive()
+    return shared.YvetzalFunkyFridayToken == runToken
 end
 
 local connections = {}
-local function Track(conn)
+local function track(conn)
     connections[#connections + 1] = conn
     return conn
 end
 
--- 2. SERVICES/CONFIGS
+local state = { alive = true, stop = nil }
 
-local RunService = game:GetService("RunService")
-local LP = game:GetService("Players").LocalPlayer
-
-local HOLD_TIME = 0.150
-local MECHANIC_INTERVAL = 0.05
-
-local Const = {
-    SideRefresh = 1.5,
-    MainStepInterval = 0.10,
-    MaxStepErrors = 30,
-    ActorRetries = 20,
-}
-
-local State = {
-    AutoSide = "Left",
-    InMatch = false,
-}
-
-local Framework = { ActorInjected = false }
-
--- 3. SIDE
+-- ------------------------------------------------------------ SIDE DETECTION
 
 local Side = {}
 
-function Side.Detect()
+function Side.detect()
     local map = workspace:FindFirstChild("Map")
     local stages = map and map:FindFirstChild("Stages")
     if not stages then return nil end
 
-    local marker = stages:FindFirstChild(LP.Name, true)
-    if not marker and LP.DisplayName ~= LP.Name then
-        marker = stages:FindFirstChild(LP.DisplayName, true)
+    local marker = stages:FindFirstChild(localPlayer.Name, true)
+    if not marker and localPlayer.DisplayName ~= localPlayer.Name then
+        marker = stages:FindFirstChild(localPlayer.DisplayName, true)
     end
+
     local cur = marker and marker.Parent
     while cur and cur ~= stages do
         local n = cur.Name
@@ -77,71 +182,86 @@ function Side.Detect()
     return nil
 end
 
-function Side.Update()
-    local side = Side.Detect()
-    if side and side ~= State.AutoSide then
-        State.AutoSide = side
-        pcall(function() LP:SetAttribute("GCCSide", side) end)
+function Side.update()
+    if State.sideMode ~= "Auto" then
+        if State.sideMode ~= State.autoSide then
+            State.autoSide = State.sideMode
+            pcall(function() localPlayer:SetAttribute("GCCSide", State.autoSide) end)
+        end
+        return State.autoSide
+    end
+
+    local side = Side.detect()
+    if side and side ~= State.autoSide then
+        State.autoSide = side
+        pcall(function() localPlayer:SetAttribute("GCCSide", side) end)
     end
     return side
 end
 
--- 4. GAME UI
+-- ------------------------------------------------------------ GAME UI HOOK
 
-local GameUI = { Game = nil, Fields = nil, NextTry = 0 }
+local GameUI = { game = nil, fields = nil, nextTry = 0 }
 
-function GameUI.Get(now)
-    local gameUI, fields = GameUI.Game, GameUI.Fields
-    if gameUI and fields and gameUI.Parent and fields.Parent then
-        return gameUI, fields
+function GameUI.get(now)
+    local g, f = GameUI.game, GameUI.fields
+    if g and f and g.Parent and f.Parent then
+        return g, f
     end
-    if now < GameUI.NextTry then return nil, nil end
-    GameUI.NextTry = now + 0.25
+    if now < GameUI.nextTry then return nil, nil end
+    GameUI.nextTry = now + 0.25
 
-    local pgui = LP:FindFirstChild("PlayerGui")
-    local window = pgui and pgui:FindFirstChild("Window")
-    gameUI = window and window:FindFirstChild("Game")
-    fields = gameUI and gameUI:FindFirstChild("Fields")
-    GameUI.Game, GameUI.Fields = gameUI, fields
-    return gameUI, fields
+    local pgui = localPlayer:FindFirstChild("PlayerGui")
+    local win = pgui and pgui:FindFirstChild("Window")
+    g = win and win:FindFirstChild("Game")
+    f = g and g:FindFirstChild("Fields")
+    GameUI.game, GameUI.fields = g, f
+    return g, f
 end
 
--- 5. ACTOR COMMN
+-- ------------------------------------------------------------ ACTOR FLAGS
 
-local function SyncActorFlagsImpl()
-    LP:SetAttribute("GCCAP", true)
-    LP:SetAttribute("GCCMechanics", true)
-    LP:SetAttribute("GCCMechanicInterval", MECHANIC_INTERVAL)
-    LP:SetAttribute("GCCHoldMs", math.floor(HOLD_TIME * 1000))
-    LP:SetAttribute("GCCDodge", true)
-    LP:SetAttribute("GCCSide", State.AutoSide)
-    LP:SetAttribute("GCCAlive", IsAlive())
-    LP:SetAttribute("GCCRunId", runId)
-end
-
-local function SyncActorFlags()
-    pcall(SyncActorFlagsImpl)
-end
-
-local function ReleaseSignal()
+local function syncFlags()
     pcall(function()
-        LP:SetAttribute("GCCReleaseAll", (tonumber(LP:GetAttribute("GCCReleaseAll")) or 0) + 1)
+        localPlayer:SetAttribute("GCCAP", State.autoplay)
+        localPlayer:SetAttribute("GCCMechanics", State.mechanics)
+        localPlayer:SetAttribute("GCCMechanicInterval", State.mechanicInterval)
+        localPlayer:SetAttribute("GCCHoldMs", math.floor(State.holdTime * 1000))
+        localPlayer:SetAttribute("GCCDodge", State.dodge)
+        localPlayer:SetAttribute("GCCSide", State.autoSide)
+        localPlayer:SetAttribute("GCCAlive", isAlive())
+        localPlayer:SetAttribute("GCCRunId", runId)
+        -- Timing and Accuracy attributes
+        localPlayer:SetAttribute("GCCPureSick", State.pureSick)
+        localPlayer:SetAttribute("GCCSickPct", State.sickPct)
+        localPlayer:SetAttribute("GCCGoodPct", State.goodPct)
+        localPlayer:SetAttribute("GCCOkPct", State.okPct)
+        localPlayer:SetAttribute("GCCBadPct", State.badPct)
+        localPlayer:SetAttribute("GCCMissPct", State.missPct)
     end)
 end
 
--- 6. CLIENTACTOR
+local function releaseAll()
+    pcall(function()
+        localPlayer:SetAttribute("GCCReleaseAll",
+            (tonumber(localPlayer:GetAttribute("GCCReleaseAll")) or 0) + 1)
+    end)
+end
 
-function Framework.TryActor()
-    if Framework.ActorInjected then
-        return LP:GetAttribute("GCCFW") == true
+-- ------------------------------------------------------------ ACTOR INJECTION
+
+local function injectActor()
+    if State.actorInjected then
+        return localPlayer:GetAttribute("GCCFW") == true
     end
     if type(run_on_actor) ~= "function" then return false end
-    local ps = LP:FindFirstChild("PlayerScripts")
+
+    local ps = localPlayer:FindFirstChild("PlayerScripts")
     local actor = ps and (ps:FindFirstChild("ClientActor") or ps:FindFirstChildWhichIsA("Actor"))
     if not actor then return false end
 
-    Framework.ActorInjected = true
-    SyncActorFlags()
+    State.actorInjected = true
+    syncFlags()
 
     run_on_actor(actor, [=[
         local Players = game:GetService("Players")
@@ -180,6 +300,12 @@ function Framework.TryActor()
             mechanicInterval = tonumber(LP:GetAttribute("GCCMechanicInterval")) or 0.05,
             holdWindow = (tonumber(LP:GetAttribute("GCCHoldMs")) or 150) / 1000,
             sideName = LP:GetAttribute("GCCSide") or "Left",
+            pureSick = LP:GetAttribute("GCCPureSick") == true,
+            sickPct = tonumber(LP:GetAttribute("GCCSickPct")) or 85,
+            goodPct = tonumber(LP:GetAttribute("GCCGoodPct")) or 10,
+            okPct = tonumber(LP:GetAttribute("GCCOkPct")) or 5,
+            badPct = tonumber(LP:GetAttribute("GCCBadPct")) or 0,
+            missPct = tonumber(LP:GetAttribute("GCCMissPct")) or 0,
             releaseDirty = false,
         }
         local attrSignals = {}
@@ -197,39 +323,25 @@ function Framework.TryActor()
             end)
         end
 
-        trackAttr("GCCReleaseAll", function()
-            attr.releaseDirty = true
-        end)
-        trackAttr("GCCRunId", function(v)
-            attr.runId = v
-        end)
-        trackAttr("GCCAlive", function(v)
-            attr.alive = v
-        end)
-        trackAttr("GCCAP", function(v)
-            attr.ap = v
-        end)
-        trackAttr("GCCDodge", function(v)
-            attr.dodge = v ~= false
-        end)
-        trackAttr("GCCMechanics", function(v)
-            attr.mechanics = v == true
-        end)
-        trackAttr("GCCMechanicInterval", function(v)
-            attr.mechanicInterval = tonumber(v) or 0.05
-        end)
-        trackAttr("GCCHoldMs", function(v)
-            attr.holdWindow = (tonumber(v) or 150) / 1000
-        end)
-        trackAttr("GCCSide", function(v)
-            attr.sideName = v or "Left"
-        end)
+        trackAttr("GCCReleaseAll", function() attr.releaseDirty = true end)
+        trackAttr("GCCRunId", function(v) attr.runId = v end)
+        trackAttr("GCCAlive", function(v) attr.alive = v end)
+        trackAttr("GCCAP", function(v) attr.ap = v end)
+        trackAttr("GCCDodge", function(v) attr.dodge = v ~= false end)
+        trackAttr("GCCMechanics", function(v) attr.mechanics = v == true end)
+        trackAttr("GCCMechanicInterval", function(v) attr.mechanicInterval = tonumber(v) or 0.05 end)
+        trackAttr("GCCHoldMs", function(v) attr.holdWindow = (tonumber(v) or 150) / 1000 end)
+        trackAttr("GCCSide", function(v) attr.sideName = v or "Left" end)
+        trackAttr("GCCPureSick", function(v) attr.pureSick = v == true end)
+        trackAttr("GCCSickPct", function(v) attr.sickPct = tonumber(v) or 85 end)
+        trackAttr("GCCGoodPct", function(v) attr.goodPct = tonumber(v) or 10 end)
+        trackAttr("GCCOkPct", function(v) attr.okPct = tonumber(v) or 5 end)
+        trackAttr("GCCBadPct", function(v) attr.badPct = tonumber(v) or 0 end)
+        trackAttr("GCCMissPct", function(v) attr.missPct = tonumber(v) or 0 end)
 
         local function getPlayerGui()
             local pg = cachedPlayerGui
-            if pg and pg.Parent then
-                return pg
-            end
+            if pg and pg.Parent then return pg end
             pg = LP:FindFirstChild("PlayerGui")
             cachedPlayerGui = pg
             return pg
@@ -237,9 +349,7 @@ function Framework.TryActor()
 
         local function getFieldsUi()
             local fieldsUi = cachedFieldsUi
-            if fieldsUi and fieldsUi.Parent then
-                return fieldsUi
-            end
+            if fieldsUi and fieldsUi.Parent then return fieldsUi end
             local pg = getPlayerGui()
             local window = pg and pg:FindFirstChild("Window")
             local gameUi = window and window:FindFirstChild("Game")
@@ -250,12 +360,8 @@ function Framework.TryActor()
 
         local function getPendulumPivot(nowS)
             local pivot = cachedPendulumPivot
-            if pivot and pivot.Parent then
-                return pivot
-            end
-            if nowS < nextPendulumRefresh then
-                return nil
-            end
+            if pivot and pivot.Parent then return pivot end
+            if nowS < nextPendulumRefresh then return nil end
             nextPendulumRefresh = nowS + 0.5
 
             local playerGui = getPlayerGui()
@@ -271,6 +377,7 @@ function Framework.TryActor()
             if type(filtergc) ~= "function" then return end
             if nowS and nowS < nextSearchAt then return end
             nextSearchAt = (nowS or 0) + 0.5
+
             local list = filtergc("table", { Keys = { "VSRG", "Songs" } })
             for _, obj in ipairs(list or {}) do
                 local root = type(obj) == "table" and rawget(obj, "VSRG")
@@ -344,12 +451,14 @@ function Framework.TryActor()
             return noteTime - songTime
         end
 
-        local function shouldHit(arrow, diff, dt)
+        -- Adjusted shouldHit logic integrating target timing offset
+        local function shouldHit(arrow, diff, dt, targetOffset)
+            local adjDiff = diff - (targetOffset or 0)
             local prev = arrow._bybyPrev
-            arrow._bybyPrev = diff
+            arrow._bybyPrev = adjDiff
             local lateWindow = math.min(0.08, math.max(0.025, (dt or 0.016) * 2.5))
-            if diff <= 0 and diff >= -lateWindow then return true end
-            if prev ~= nil and prev > 0 and diff < -lateWindow and diff >= -0.15 then return true end
+            if adjDiff <= 0 and adjDiff >= -lateWindow then return true end
+            if prev ~= nil and prev > 0 and adjDiff < -lateWindow and adjDiff >= -0.15 then return true end
             return false
         end
 
@@ -358,6 +467,7 @@ function Framework.TryActor()
             if af == nil then return true end
             local fs = field.Side
             if af == fs then return true end
+
             if type(af) == "table" then
                 if af == field then return true end
                 local afSide = rawget(af, "Side")
@@ -369,6 +479,7 @@ function Framework.TryActor()
                 end
                 return true
             end
+
             if type(af) == "string" then
                 local a = af:lower()
                 if a == "all" or a == "both" then return true end
@@ -397,6 +508,7 @@ function Framework.TryActor()
                     end
                 end
             end
+
             if groups > 0 then
                 local useHint = groups <= 10
                 for i = 1, groups do
@@ -498,14 +610,56 @@ function Framework.TryActor()
 
         local function processArrow(arrow, laneHint)
             if not arrow or arrow._bybyHit then return end
+
             if not sideBroken and not sideMatches(arrow, scan.field, scan.sideName) then
                 scan.sideSkips = scan.sideSkips + 1
                 return
             end
             scan.sidePasses = scan.sidePasses + 1
+
             if scan.dodge and type(arrow.NoteData) == "table" and arrow.NoteData.Type and death[arrow.NoteData.Type] then
                 return
             end
+
+            -- Offset assignment per note (zero-allocation hot path)
+            if arrow._bybyTargetOffset == nil and not arrow._bybyMiss then
+                if attr.pureSick then
+                    arrow._bybyTargetOffset = math.random(-49, 49) / 1000
+                else
+                    local s = attr.sickPct
+                    local g = attr.goodPct
+                    local o = attr.okPct
+                    local b = attr.badPct
+                    local m = attr.missPct
+                    local total = s + g + o + b + m
+                    if total <= 0 then
+                        total = 100
+                        s = 100
+                    end
+
+                    local roll = math.random() * total
+                    if roll < s then
+                        -- Sick: [-49ms, +49ms]
+                        arrow._bybyTargetOffset = math.random(-49, 49) / 1000
+                    elseif roll < (s + g) then
+                        -- Good: [50ms, 74ms] early (-) or late (+)
+                        local ms = math.random(50, 74)
+                        arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) / 1000
+                    elseif roll < (s + g + o) then
+                        -- Ok: [75ms, 99ms] early (-) or late (+)
+                        local ms = math.random(75, 99)
+                        arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) / 1000
+                    elseif roll < (s + g + o + b) then
+                        -- Bad: [100ms, 120ms] early (-) or late (+)
+                        local ms = math.random(100, 120)
+                        arrow._bybyTargetOffset = (math.random() > 0.5 and ms or -ms) / 1000
+                    else
+                        -- Miss: Target is flagged to despawn without pressing
+                        arrow._bybyMiss = true
+                    end
+                end
+            end
+
             local rawLane = laneHint or extractLane(arrow)
             if not rawLane then return end
             if rawLane == 0 then scan.zeroBased = true end
@@ -516,7 +670,15 @@ function Framework.TryActor()
             diff = diff / scan.playback
             if diff > -0.5 then scan.pending = scan.pending + 1 end
 
-            if shouldHit(arrow, diff, scan.dt) then
+            -- If note rolled as a Miss, let it pass and discard once missed
+            if arrow._bybyMiss then
+                if diff < -0.25 then
+                    arrow._bybyHit = true
+                end
+                return
+            end
+
+            if shouldHit(arrow, diff, scan.dt, arrow._bybyTargetOffset) then
                 poolPush(scan, arrow, rawLane, (extractLength(arrow) or 0.03) / scan.playback)
             elseif diff < -0.25 then
                 arrow._bybyHit = true
@@ -544,6 +706,7 @@ function Framework.TryActor()
                 releaseHeld()
                 return
             end
+
             local nowS = clockS()
             if not fwV then
                 search(nowS)
@@ -558,11 +721,12 @@ function Framework.TryActor()
             local holdWindow = attr.holdWindow
             local sideName = attr.sideName
 
-            -- AUTO MECHANICS
+            -- Mechanics Handler
             if mechanicsEnabled then
                 local mechanics = fwV.VSRG and fwV.VSRG.Mechanics
                 local actionController = mechanics and mechanics.Action
                 local activeAction = actionController and actionController.ActiveAction
+
                 if activeAction and activeAction.Enabled then
                     if activeAction ~= lastMechanicAction then
                         lastMechanicAction = activeAction
@@ -610,9 +774,10 @@ function Framework.TryActor()
                 mechanicCentered = false
             end
 
-            -- VSRG
+            -- Rhythm Notes Engine
             local field = fwV.VSRG and fwV.VSRG.GameHandler and fwV.VSRG.GameHandler.Field
             local gameObj = field and field.Game
+
             if gameObj and type(field.NoteCache) == "table" then
                 activeField = field
                 if type(field.HitLane) == "function" and not hitLaneSeen then
@@ -686,6 +851,7 @@ function Framework.TryActor()
                             end
                         end
                     end)
+
                     if not probed and laneCount <= 4 and lastLaneProbeField ~= field then
                         lastLaneProbeField = field
                         pcall(function()
@@ -704,8 +870,10 @@ function Framework.TryActor()
                             if best >= 3 and best <= 9 then probed = best end
                         end)
                     end
+
                     if probed and probed > laneCount and probed <= 9 then laneCount = probed end
                 end
+
                 if maxLane > 0 then
                     local observed = zeroBased and (maxLane + 1) or maxLane
                     if observed > laneCount and observed <= 9 then laneCount = observed end
@@ -731,292 +899,306 @@ function Framework.TryActor()
     return true
 end
 
-function Framework.Init()
+-- ------------------------------------------------------------ MAIN LOOP
+
+local Main = { stepErrors = 0 }
+
+function Main.step()
+    local now = os.clock()
+    local gameUI, fields = GameUI.get(now)
+    local inGame = (gameUI and gameUI.Visible and fields and fields.Visible) == true
+
+    if inGame and not State.inMatch then
+        State.inMatch = true
+        Side.update()
+        syncFlags()
+        if not State.actorInjected then
+            pcall(injectActor)
+        end
+    elseif not inGame and State.inMatch then
+        State.inMatch = false
+        releaseAll()
+    end
+end
+
+function Main.start()
+    local nextStepAt = 0
+
+    track(runService.Heartbeat:Connect(function()
+        local now = os.clock()
+        if now < nextStepAt then return end
+        nextStepAt = now + Tune.stepInterval
+
+        local ok = pcall(Main.step)
+        if ok then
+            Main.stepErrors = 0
+        else
+            Main.stepErrors = Main.stepErrors + 1
+            if Main.stepErrors >= Tune.maxStepErrors then
+                Main.stepErrors = 0
+                pcall(function()
+                    localPlayer:SetAttribute("GCCAP", false)
+                    localPlayer:SetAttribute("GCCAlive", false)
+                end)
+                releaseAll()
+            end
+        end
+    end))
+
     task.spawn(function()
-        for _ = 1, Const.ActorRetries do
-            if not IsAlive() then return end
-            if Framework.ActorInjected then return end
-            pcall(Framework.TryActor)
+        while isAlive() do
+            task.wait(Tune.sideRefresh)
+            if State.inMatch then Side.update() end
+        end
+    end)
+
+    task.spawn(function()
+        for _ = 1, Tune.actorRetries do
+            if not isAlive() then return end
+            if State.actorInjected then return end
+            pcall(injectActor)
             task.wait(1)
         end
     end)
 end
 
--- 7. MAIN
+-- ------------------------------------------------------------ UI SETUP
 
-local Main = { StepErrors = 0 }
+mainTab:CreateSection({ name = "AUTOPLAY", icon = "eye" })
 
-function Main.Step()
-    local now = os.clock()
-    local gameUI, fields = GameUI.Get(now)
-    local isPlaying = (gameUI and gameUI.Visible and fields and fields.Visible) == true
+mainTab:CreateToggle({
+    name = "Enable Autoplay",
+    flag = "Yvetzal_FunkyFriday_Enabled",
+    value = true,
+    callback = function(v)
+        State.autoplay = v
+        syncFlags()
+        if not v then releaseAll() end
+    end,
+})
 
-    if isPlaying and not State.InMatch then
-        State.InMatch = true
-        Side.Update()
-        SyncActorFlags()
-        if not Framework.ActorInjected then
-            pcall(Framework.TryActor)
+mainTab:CreateToggle({
+    name = "Dodge Death / Poison",
+    flag = "Yvetzal_FunkyFriday_Dodge",
+    value = true,
+    callback = function(v)
+        State.dodge = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateToggle({
+    name = "Auto Mechanics (RESIST)",
+    flag = "Yvetzal_FunkyFriday_Mechanics",
+    value = true,
+    callback = function(v)
+        State.mechanics = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateDropdown({
+    name = "Side",
+    flag = "Yvetzal_FunkyFriday_Side",
+    options = { "Auto", "Left", "Right" },
+    value = "Auto",
+    callback = function(v)
+        State.sideMode = v
+        Side.update()
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSection({ name = "ACCURACY & TIMING", icon = "crosshair" })
+
+mainTab:CreateToggle({
+    name = "Pure Sick Mode (100% Sick)",
+    flag = "Yvetzal_FunkyFriday_PureSick",
+    value = false,
+    callback = function(v)
+        State.pureSick = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Sick Chance",
+    flag = "Yvetzal_FunkyFriday_SickPct",
+    range = { 0, 100 },
+    value = 85,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.sickPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Good Chance",
+    flag = "Yvetzal_FunkyFriday_GoodPct",
+    range = { 0, 100 },
+    value = 10,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.goodPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Ok Chance",
+    flag = "Yvetzal_FunkyFriday_OkPct",
+    range = { 0, 100 },
+    value = 5,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.okPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Bad Chance",
+    flag = "Yvetzal_FunkyFriday_BadPct",
+    range = { 0, 100 },
+    value = 0,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.badPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Miss Chance",
+    flag = "Yvetzal_FunkyFriday_MissPct",
+    range = { 0, 100 },
+    value = 0,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.missPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Hold Window",
+    flag = "Yvetzal_FunkyFriday_HoldMs",
+    range = { 30, 300 },
+    value = 150,
+    increment = 5,
+    suffix = " ms",
+    callback = function(v)
+        State.holdTime = v / 1000
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSlider({
+    name = "Mechanic Interval",
+    flag = "Yvetzal_FunkyFriday_MechInterval",
+    range = { 0.01, 0.2 },
+    value = 0.05,
+    increment = 0.01,
+    suffix = " s",
+    callback = function(v)
+        State.mechanicInterval = v
+        syncFlags()
+    end,
+})
+
+settingsTab:CreateSection({ name = "SCRIPT", icon = "settings" })
+
+settingsTab:CreateText({
+    name = "Requirements",
+    text = "Requires run_on_actor (ClientActor) and filtergc support.",
+})
+
+settingsTab:CreateButton({
+    name = "Re-inject Actor",
+    callback = function()
+        State.actorInjected = false
+        pcall(function() localPlayer:SetAttribute("GCCFW", false) end)
+        pcall(injectActor)
+    end,
+})
+
+settingsTab:CreateButton({
+    name = "Unload Funky Friday",
+    callback = function()
+        if state.stop then
+            state.stop()
         end
-    elseif not isPlaying and State.InMatch then
-        State.InMatch = false
-        ReleaseSignal()
-    end
-end
+    end,
+})
 
-function Main.Start()
-    local nextStepAt = 0
+-- ------------------------------------------------------------ CLEANUP & INIT
 
-    Track(RunService.Heartbeat:Connect(function()
-        local now = os.clock()
-        if now < nextStepAt then return end
-        nextStepAt = now + Const.MainStepInterval
+shared.YvetzalFunkyFriday = state
 
-        local ok, err = pcall(Main.Step)
-        if ok then
-            Main.StepErrors = 0
-        else
-            Main.StepErrors = Main.StepErrors + 1
-            if Main.StepErrors >= Const.MaxStepErrors then
-                Main.StepErrors = 0
-                pcall(function()
-                    LP:SetAttribute("GCCAP", false)
-                    LP:SetAttribute("GCCAlive", false)
-                end)
-                ReleaseSignal()
-            end
-        end
-    end))
+local function cleanup()
+    if not state.alive then return end
+    state.alive = false
 
-    task.spawn(function()
-        while IsAlive() do
-            task.wait(Const.SideRefresh)
-            if State.InMatch then
-                Side.Update()
-            end
-        end
-    end)
+    shared.YvetzalFunkyFridayToken = nil
+    releaseAll()
 
-    Framework.Init()
-end
-
--- 8. STATUS GUI
-
-local StatusGui
-
-local function GetExecutorName()
-    if type(identifyexecutor) == "function" then
-        local ok, name = pcall(identifyexecutor)
-        if ok and type(name) == "string" and #name > 0 then
-            return name
-        end
-    end
-    return "UNKNOWN"
-end
-
-local function BuildStatusGui(execName, hasRunOnActor, hasFiltergc)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "GoodGammingChair"
-    gui.ResetOnSpawn = false
-    gui.DisplayOrder = 9999
-
-    local parented = pcall(function()
-        gui.Parent = game:GetService("CoreGui")
-    end)
-    if not parented or not gui.Parent then
-        local pg = LP:FindFirstChild("PlayerGui")
-        if not pg then
-            gui:Destroy()
-            return nil, nil
-        end
-        gui.Parent = pg
-    end
-
-    local GREEN = Color3.fromRGB(96, 205, 120)
-    local RED = Color3.fromRGB(235, 90, 90)
-    local ORANGE = Color3.fromRGB(240, 175, 80)
-    local GRAY = Color3.fromRGB(165, 165, 180)
-    local WHITE = Color3.fromRGB(240, 240, 250)
-    local DIM = Color3.fromRGB(120, 120, 140)
-
-    local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 360, 0, 195)
-    main.Position = UDim2.new(0, 24, 0, 160)
-    main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    main.BorderSizePixel = 0
-    main.Active = true
-    main.Draggable = true
-    main.Parent = gui
-
-    local mc = Instance.new("UICorner")
-    mc.CornerRadius = UDim.new(0, 10)
-    mc.Parent = main
-
-    local ms = Instance.new("UIStroke")
-    ms.Color = Color3.fromRGB(65, 65, 80)
-    ms.Thickness = 1
-    ms.Parent = main
-
-    local title = Instance.new("TextLabel")
-    title.BackgroundTransparency = 1
-    title.Position = UDim2.new(0, 14, 0, 6)
-    title.Size = UDim2.new(1, -70, 0, 24)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 16
-    title.TextColor3 = WHITE
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "Good Gamming Chair"
-    title.Parent = main
-
-    local close = Instance.new("TextButton")
-    close.Position = UDim2.new(1, -40, 0, 4)
-    close.Size = UDim2.new(0, 28, 0, 26)
-    close.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-    close.Font = Enum.Font.GothamBold
-    close.TextSize = 14
-    close.TextColor3 = Color3.fromRGB(255, 255, 255)
-    close.Text = "X"
-    close.Parent = main
-
-    local cc = Instance.new("UICorner")
-    cc.CornerRadius = UDim.new(0, 6)
-    cc.Parent = close
-
-    Track(close.MouseButton1Click:Connect(function()
-        gui:Destroy()
-    end))
-
-    local sep = Instance.new("Frame")
-    sep.Position = UDim2.new(0, 14, 0, 36)
-    sep.Size = UDim2.new(1, -28, 0, 1)
-    sep.BackgroundColor3 = Color3.fromRGB(65, 65, 80)
-    sep.BorderSizePixel = 0
-    sep.Parent = main
-
-    local rows = {}
-
-    local function addLabel(y, text, color, size)
-        local l = Instance.new("TextLabel")
-        l.BackgroundTransparency = 1
-        l.Position = UDim2.new(0, 14, 0, y)
-        l.Size = UDim2.new(1, -28, 0, 16)
-        l.Font = Enum.Font.Gotham
-        l.TextSize = size or 13
-        l.TextColor3 = color or GRAY
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Text = text
-        l.Parent = main
-        return l
-    end
-
-    local function addRow(y, name, valueText, valueColor)
-        local l = addLabel(y, name, GRAY, 13)
-        l.Size = UDim2.new(0, 188, 0, 16)
-
-        local v = Instance.new("TextLabel")
-        v.BackgroundTransparency = 1
-        v.Position = UDim2.new(0, 202, 0, y)
-        v.Size = UDim2.new(1, -216, 0, 16)
-        v.Font = Enum.Font.GothamMedium
-        v.TextSize = 12
-        v.TextColor3 = valueColor or WHITE
-        v.TextXAlignment = Enum.TextXAlignment.Right
-        v.TextTruncate = Enum.TextTruncate.AtEnd
-        v.Text = valueText
-        v.Parent = main
-        return v
-    end
-
-    rows.exec = addRow(46, "Executor", execName, execName == "UNKNOWN" and ORANGE or GREEN)
-
-    addLabel(72, "AP SUPPORT", DIM, 11)
-
-    rows.actor = addRow(94, "run_on_actor (ClientActor)",
-        hasRunOnActor and "OK" or "MISSING", hasRunOnActor and GREEN or RED)
-    rows.filtergc = addRow(116, "filtergc (game clock)",
-        hasFiltergc and "OK" or "MISSING", hasFiltergc and GREEN or RED)
-    rows.hitlane = addRow(138, "HitLane (lane input)", "waiting", GRAY)
-    rows.status = addRow(162, "Status", "starting...", ORANGE)
-
-    local function updateGuiStatus()
-        if rows.hitlane and rows.hitlane.Parent then
-            local hl = LP:GetAttribute("GCCHitLane") == true
-            rows.hitlane.Text = hl and "OK" or "waiting"
-            rows.hitlane.TextColor3 = hl and GREEN or GRAY
-        end
-        if rows.status and rows.status.Parent then
-            if not hasRunOnActor then
-                rows.status.Text = "not supported"
-                rows.status.TextColor3 = RED
-            elseif LP:GetAttribute("GCCFW") == true then
-                rows.status.Text = "connected (vsrg)"
-                rows.status.TextColor3 = GREEN
-            else
-                rows.status.Text = "searching game..."
-                rows.status.TextColor3 = ORANGE
-            end
-        end
-    end
-
-    updateGuiStatus()
-    Track(LP:GetAttributeChangedSignal("GCCHitLane"):Connect(updateGuiStatus))
-    Track(LP:GetAttributeChangedSignal("GCCFW"):Connect(updateGuiStatus))
-
-    return gui, rows
-end
-
--- 9. CLEANUP
-
-local function Cleanup()
-    getgenv().GoodGammingChairToken = nil
-    ReleaseSignal()
     for _, conn in ipairs(connections) do
         pcall(function() conn:Disconnect() end)
     end
     table.clear(connections)
+
     pcall(function()
-        LP:SetAttribute("GCCAP", false)
-        LP:SetAttribute("GCCMechanics", false)
-        LP:SetAttribute("GCCMechanicInterval", nil)
-        LP:SetAttribute("GCCAlive", false)
-        LP:SetAttribute("GCCFW", false)
-        LP:SetAttribute("GCCFWKind", nil)
-        LP:SetAttribute("GCCHitLane", nil)
-        LP:SetAttribute("GCCSide", nil)
-        LP:SetAttribute("GCCRunId", nil)
-        LP:SetAttribute("GCCHoldMs", nil)
-        LP:SetAttribute("GCCDodge", nil)
-        LP:SetAttribute("BybyAP", false)
-        LP:SetAttribute("BybyAlive", false)
-        LP:SetAttribute("BybyRunId", nil)
-        LP:SetAttribute("BybyFW", false)
-        LP:SetAttribute("BybyFWKind", nil)
+        localPlayer:SetAttribute("GCCAP", false)
+        localPlayer:SetAttribute("GCCMechanics", false)
+        localPlayer:SetAttribute("GCCMechanicInterval", nil)
+        localPlayer:SetAttribute("GCCAlive", false)
+        localPlayer:SetAttribute("GCCFW", false)
+        localPlayer:SetAttribute("GCCFWKind", nil)
+        localPlayer:SetAttribute("GCCHitLane", nil)
+        localPlayer:SetAttribute("GCCSide", nil)
+        localPlayer:SetAttribute("GCCRunId", nil)
+        localPlayer:SetAttribute("GCCHoldMs", nil)
+        localPlayer:SetAttribute("GCCDodge", nil)
+        localPlayer:SetAttribute("GCCPureSick", nil)
+        localPlayer:SetAttribute("GCCSickPct", nil)
+        localPlayer:SetAttribute("GCCGoodPct", nil)
+        localPlayer:SetAttribute("GCCOkPct", nil)
+        localPlayer:SetAttribute("GCCBadPct", nil)
+        localPlayer:SetAttribute("GCCMissPct", nil)
     end)
-    if StatusGui then
-        pcall(function() StatusGui:Destroy() end)
-        StatusGui = nil
+
+    if shared.YvetzalFunkyFriday == state then
+        shared.YvetzalFunkyFriday = nil
     end
-    getgenv().GoodGammingChairCleanup = nil
+    shared.YvetzalFunkyFridayCleanup = nil
 end
 
--- 10. INICIALIZATION
-
-getgenv().GoodGammingChairCleanup = Cleanup
-
-local execName = GetExecutorName()
-local hasRunOnActor = type(run_on_actor) == "function"
-local hasFiltergc = false
-if type(filtergc) == "function" then
-    local ok, res = pcall(filtergc, "table", { Keys = { "VSRG", "Songs" } })
-    hasFiltergc = ok and type(res) == "table"
+shared.YvetzalFunkyFridayCleanup = cleanup
+state.stop = function()
+    cleanup()
 end
 
-Main.Start()
-SyncActorFlags()
-
-local gui, rows = BuildStatusGui(execName, hasRunOnActor, hasFiltergc)
-if gui then
-    StatusGui = gui
+local originalUnload = window.Unload
+window.Unload = function(self)
+    cleanup()
+    if type(originalUnload) == "function" then
+        return originalUnload(self)
+    end
+    return nil
 end
 
-print(" GAMING CHAIR INICIALIZATED ")
+Main.start()
+syncFlags()
+
+window:Notify({
+    title = "Yvetzal",
+    content = "Autoplay loaded with Accuracy Engine",
+    icon = iconAsset("eye"),
+    duration = 4,
+})
