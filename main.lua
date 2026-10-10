@@ -155,11 +155,27 @@ local function cropIcon(img, name)
 end
 
 local rayfield
-local ok, err = pcall(function()
-    rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
-end)
-if not ok or not rayfield then
-    warn("[Yvetzal] Rayfield Gen2 failed to load:", err)
+for _, url in ipairs({
+    "https://sirius.menu/gen2",
+    "https://sirius.menu/rayfield",
+    "https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua",
+}) do
+    local ok, res = pcall(function()
+        local src = game:HttpGet(url)
+        local fn = loadstring(src)
+        if type(fn) == "function" then
+            return fn()
+        end
+        return nil
+    end)
+    if ok and type(res) == "table" and (res.CreateWindow or res.createWindow) then
+        rayfield = res
+        break
+    end
+end
+
+if not rayfield then
+    warn("[Yvetzal] Failed to load Rayfield: all endpoints unreachable or unsupported executor.")
     return
 end
 
