@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized DAS v4 & Adaptive DMBOD)
+-- Yvetzal: Funky Friday Autoplay (Optimized DAS v4 & Adaptive DMBOD + Watcher Telemetry Engine)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -10,7 +10,7 @@ local httpService = game:GetService("HttpService")
 local localPlayer = players.LocalPlayer
 local shared = type(getgenv) == "function" and getgenv() or _G
 
--- Kill prior instance
+-- Kill prior instances
 if shared.GoodGammingChairCleanup then
     pcall(shared.GoodGammingChairCleanup)
 end
@@ -34,7 +34,7 @@ local DefaultConfig = {
     goodPct = 6,
     okPct = 2,
     badPct = 0,
-    missPct = 0, -- Base miss stays 0; DMBOD handles dynamic misses
+    missPct = 0,
     missCooldown = 4.0,
     sickMaxOffsetMs = 18,
     -- Dynamic Accuracy Scaling (DAS v4)
@@ -47,6 +47,8 @@ local DefaultConfig = {
     -- Dynamic Missing Based on Difficulty (DMBOD v4)
     dmbod = true,
     dmbodMaxMissPct = 5,
+    -- Watcher Engine
+    watcherEnabled = true,
 }
 
 local State = {}
@@ -157,7 +159,7 @@ end
 
 local window = rayfield:CreateWindow({
     name = "Yvetzal",
-    subtitle = "FUNKY FRIDAY AUTOPLAY",
+    subtitle = "FUNKY FRIDAY AUTOPLAY & WATCHER",
     icon = iconAsset("flame"),
     showName = "Yvetzal",
     showIcon = iconAsset("flame"),
@@ -183,6 +185,7 @@ local function makeTab(name, icon)
 end
 
 local mainTab = makeTab("Autoplay", "eye")
+local watcherTab = makeTab("Watcher", "crosshair")
 local settingsTab = makeTab("Settings", "settings")
 
 -- ------------------------------------------------------------ RUN STATE & TOKENS
@@ -301,6 +304,8 @@ local function syncFlags()
         -- Dynamic Missing Based on Difficulty (DMBOD)
         localPlayer:SetAttribute("GCCDmbod", State.dmbod)
         localPlayer:SetAttribute("GCDmbodMaxMiss", State.dmbodMaxMissPct)
+        -- Watcher
+        localPlayer:SetAttribute("GCCWatcherActive", State.watcherEnabled)
     end)
 end
 
@@ -340,6 +345,7 @@ local function injectActor()
         local math_clamp = math.clamp
         local math_floor = math.floor
         local math_exp = math.exp
+        local table_sort = table.sort
 
         local fwV
         local laneCount = 4
@@ -386,6 +392,18 @@ local function injectActor()
         local accumulatedStrain = 0
         local lastStrainUpdateTime = 0
 
+        -- Watcher Runtime Telemetry State
+        local watcherActive = true
+        local currentPeakNPS = 0
+        local lastComputedRollingNPS = 0
+        local currentSpam = false
+        local currentComfort = "COMFORTABLE"
+        local dasActivationCount = 0
+        local dmbodTriggerCount = 0
+        local currentDynamicMissRate = 0
+        local chartAnalyzedCache = nil
+        local nextTelemetrySyncAt = 0
+
         local attr = {
             runId = actorRunId,
             alive = LP:GetAttribute("GCCAlive"),
@@ -410,6 +428,7 @@ local function injectActor()
             penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 40,
             dmbod = LP:GetAttribute("GCCDmbod") ~= false,
             dmbodMaxMiss = tonumber(LP:GetAttribute("GCDmbodMaxMiss")) or 5,
+            watcherActive = LP:GetAttribute("GCCWatcherActive") ~= false,
             releaseDirty = false,
         }
 
@@ -433,6 +452,17 @@ local function injectActor()
             end
         end
         recalculateWeights()
+
+        local function resetWatcherCounters()
+            currentPeakNPS = 0
+            lastComputedRollingNPS = 0
+            currentSpam = false
+            currentComfort = "COMFORTABLE"
+            dasActivationCount = 0
+            dmbodTriggerCount = 0
+            currentDynamicMissRate = 0
+            chartAnalyzedCache = nil
+        end
 
         local attrSignals = {}
         local function disconnectAttrSignals()
@@ -472,6 +502,8 @@ local function injectActor()
         trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 40 end)
         trackAttr("GCCDmbod", function(v) attr.dmbod = v ~= false end)
         trackAttr("GCDmbodMaxMiss", function(v) attr.dmbodMaxMiss = tonumber(v) or 5 end)
+        trackAttr("GCCWatcherActive", function(v) attr.watcherActive = v ~= false end)
+        trackAttr("GCCWatcherReset", function() resetWatcherCounters() end)
 
         local function getPlayerGui()
             local pg = cachedPlayerGui
@@ -574,7 +606,6 @@ local function injectActor()
             return noteTime - songTime
         end
 
-        -- Irwin-Hall Gaussian generator (n=3, zero-mean)
         local function gaussianOffset(maxWindowSec)
             local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
             local offset = z * (maxWindowSec * 0.33)
@@ -652,6 +683,126 @@ local function injectActor()
                     slot[1], slot[2] = nil, nil
                 end
             end
+        end
+
+        -- ------------------------------------------------------------
+        -- STATIC CHART DIFFICULTY & INTERVAL ANALYZER (WATCHER)
+        -- ------------------------------------------------------------
+        local function analyzeChart(field, sideName)
+            if not field or type(field.NoteCache) ~= "table" then return nil end
+
+            local noteTimes = {}
+            local seenIds = {}
+
+            forEachNote(field.NoteCache, function(arrow)
+                if not sideMatches(arrow, field, sideName) then return end
+                if arrow.NoteData and (arrow.NoteData.Type == "Death" or arrow.NoteData.Type == "Poison") then return end
+
+                local t = extractTime(arrow)
+                if t then
+                    if t > 1000 then t = t * 0.001 end
+                    local id = arrow.Index or (arrow.NoteData and arrow.NoteData.Index) or arrow
+                    if not seenIds[id] then
+                        seenIds[id] = true
+                        noteTimes[#noteTimes + 1] = t
+                    end
+                end
+            end)
+
+            local totalNotes = #noteTimes
+            if totalNotes < 2 then
+                return {
+                    totalNotes = totalNotes,
+                    duration = 0,
+                    meanNps = 0,
+                    meanDeltaMs = 0,
+                    primaryTier = "NORMAL",
+                    pctNormal = 100,
+                    pctHard = 0,
+                    pctInsane = 0,
+                    pctMania = 0,
+                    pctLunatic = 0,
+                    pctImpossible = 0,
+                }
+            end
+
+            table_sort(noteTimes)
+
+            local minT = noteTimes[1]
+            local maxT = noteTimes[totalNotes]
+            local duration = math_max(1, maxT - minT)
+            local meanNps = totalNotes / duration
+
+            local deltaSum = 0
+            local deltaCount = 0
+
+            local counts = {
+                Normal = 0,
+                Hard = 0,
+                Insane = 0,
+                Mania = 0,
+                Lunatic = 0,
+                Impossible = 0,
+            }
+
+            for i = 2, totalNotes do
+                local dtSec = noteTimes[i] - noteTimes[i - 1]
+                if dtSec > 0.002 then
+                    local dtMs = dtSec * 1000
+                    deltaSum = deltaSum + dtMs
+                    deltaCount = deltaCount + 1
+
+                    local localNps = 1000.0 / dtMs
+
+                    -- Difficulty categorization based on density & gap
+                    if localNps < 4 or dtMs > 250 then
+                        counts.Normal = counts.Normal + 1
+                    elseif localNps <= 7 or dtMs > 142 then
+                        counts.Hard = counts.Hard + 1
+                    elseif localNps <= 11 or dtMs > 90 then
+                        counts.Insane = counts.Insane + 1
+                    elseif localNps <= 16 or dtMs > 62.5 then
+                        counts.Mania = counts.Mania + 1
+                    elseif localNps <= 22 or dtMs > 45 then
+                        counts.Lunatic = counts.Lunatic + 1
+                    else
+                        counts.Impossible = counts.Impossible + 1
+                    end
+                end
+            end
+
+            local validIntervals = math_max(1, deltaCount)
+            local meanDeltaMs = deltaSum / validIntervals
+
+            local pctNormal = (counts.Normal / validIntervals) * 100
+            local pctHard = (counts.Hard / validIntervals) * 100
+            local pctInsane = (counts.Insane / validIntervals) * 100
+            local pctMania = (counts.Mania / validIntervals) * 100
+            local pctLunatic = (counts.Lunatic / validIntervals) * 100
+            local pctImpossible = (counts.Impossible / validIntervals) * 100
+
+            -- Determine highest weighted primary tier
+            local primary = "NORMAL"
+            local maxP = pctNormal
+            if pctHard > maxP then maxP = pctHard; primary = "HARD" end
+            if pctInsane > maxP then maxP = pctInsane; primary = "INSANE" end
+            if pctMania > maxP then maxP = pctMania; primary = "MANIA" end
+            if pctLunatic > maxP then maxP = pctLunatic; primary = "LUNATIC" end
+            if pctImpossible > maxP then maxP = pctImpossible; primary = "IMPOSSIBLE" end
+
+            return {
+                totalNotes = totalNotes,
+                duration = duration,
+                meanNps = meanNps,
+                meanDeltaMs = meanDeltaMs,
+                primaryTier = primary,
+                pctNormal = pctNormal,
+                pctHard = pctHard,
+                pctInsane = pctInsane,
+                pctMania = pctMania,
+                pctLunatic = pctLunatic,
+                pctImpossible = pctImpossible,
+            }
         end
 
         local function pressLane(lane, down)
@@ -765,7 +916,6 @@ local function injectActor()
             if not diff then return end
             diff = diff / scan.playback
 
-            -- Expired or missed notes cleanup
             if diff < -0.25 then
                 arrow._bybyHit = true
                 return
@@ -776,18 +926,16 @@ local function injectActor()
             end
 
             -- ------------------------------------------------------------
-            -- REFACTORED DAS v4 & BALANCED DMBOD
-            -- Evaluated exclusively when entering immediate approach window (diff <= 0.22s)
+            -- DAS v4 & DMBOD & TELEMETRY EVALUATION
             -- ------------------------------------------------------------
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss and diff <= 0.22 then
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
                 local dtLane = (lastLaneT > 0) and (nTime - lastLaneT) or 1.0
 
-                -- 1. Chord Detection (notes within 14ms share simultaneous timing)
                 local isChord = (lastGlobalNoteTime > 0) and (math_abs(nTime - lastGlobalNoteTime) <= 0.014)
 
-                -- 2. Rolling Density & Burst NPS
+                -- 1. Rolling Density & Burst NPS
                 npsRing[ringHead] = nTime
                 ringHead = (ringHead % RING_SIZE) + 1
                 if ringCount < RING_SIZE then
@@ -803,12 +951,20 @@ local function injectActor()
                     end
                 end
                 local rollingNPS = activeDensityCount / NPS_WINDOW
+                lastComputedRollingNPS = rollingNPS
 
                 local dtInter = (lastDistinctNoteTime > 0) and math_max(0.015, nTime - lastDistinctNoteTime) or 0.20
                 local burstNPS = math_clamp(1.0 / dtInter, 0.0, 35.0)
                 local effectiveNPS = math_max(rollingNPS, (rollingNPS * 0.5) + (burstNPS * 0.5))
 
-                -- 3. Exponential Strain & Fatigue Accumulator
+                if effectiveNPS > currentPeakNPS then
+                    currentPeakNPS = effectiveNPS
+                end
+
+                -- Spam Detection (< denseThresholdMs)
+                currentSpam = (dtInter * 1000) < attr.denseMs
+
+                -- 2. Exponential Strain & Fatigue Accumulator
                 if lastStrainUpdateTime > 0 then
                     local dtIdle = math_max(0, nTime - lastStrainUpdateTime)
                     if dtIdle > 0 then
@@ -825,17 +981,24 @@ local function injectActor()
                     accumulatedStrain = math_clamp(accumulatedStrain + (densityOverhead * 0.12), 0.0, 1.0)
                 end
 
-                -- 4. Lane Jack Fatigue
+                -- Fatigue state
+                if accumulatedStrain >= 0.85 then
+                    currentComfort = "OVERLOAD"
+                elseif effectiveNPS > comfortNps then
+                    currentComfort = "STRAINED"
+                else
+                    currentComfort = "COMFORTABLE"
+                end
+
+                -- 3. Lane Jack Fatigue
                 local jackStrain = 0.0
                 if lastLaneT > 0 and dtLane < 0.22 and dtLane > 0.012 then
                     jackStrain = math_clamp(1.0 - (dtLane / 0.22), 0.0, 1.0)
                 end
 
-                -- Continuous difficulty factor [0.0 - 1.0]
                 local baseDiffFactor = math_clamp((effectiveNPS - comfortNps) / (hardNps - comfortNps), 0.0, 1.0)
                 local diffIndex = math_clamp((baseDiffFactor * 0.45) + (accumulatedStrain * 0.35) + (jackStrain * 0.20), 0.0, 1.0)
 
-                -- Update timestamps
                 lastGlobalNoteTime = nTime
                 if not isChord then
                     lastDistinctNoteTime = nTime
@@ -844,7 +1007,7 @@ local function injectActor()
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                -- 5. Dynamic Missing (DMBOD v4)
+                -- 4. Dynamic Missing (DMBOD v4)
                 local currentMissPct = 0
                 if attr.dmbod then
                     local lowDiffBaseline = math_min(0.4, attr.dmbodMaxMiss * 0.08)
@@ -853,8 +1016,9 @@ local function injectActor()
                 else
                     currentMissPct = attr.missPct
                 end
+                currentDynamicMissRate = currentMissPct
 
-                -- 6. Dynamic Accuracy Scaling (DAS v4)
+                -- 5. Dynamic Accuracy Scaling (DAS v4)
                 local curSick = attr.sickPct
                 local curGood = attr.goodPct
                 local curOk = attr.okPct
@@ -863,6 +1027,9 @@ local function injectActor()
                 if attr.dynAcc and diffIndex > 0.05 then
                     local penaltyMultiplier = diffIndex * (attr.penaltyPct * 0.01)
                     local shaved = curSick * penaltyMultiplier
+                    if shaved > 1 then
+                        dasActivationCount = dasActivationCount + 1
+                    end
                     curSick = math_max(5, curSick - shaved)
 
                     local highShift = diffIndex
@@ -897,6 +1064,7 @@ local function injectActor()
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 else
                     arrow._bybyMiss = true
+                    dmbodTriggerCount = dmbodTriggerCount + 1
                     nextMissAllowedAt = scan.nowS + attr.missCooldown
                 end
             end
@@ -926,7 +1094,7 @@ local function injectActor()
                 connection:Disconnect()
                 return
             end
-            if attr.alive == false or attr.ap ~= true then
+            if attr.alive == false then
                 releaseHeld()
                 return
             end
@@ -940,7 +1108,7 @@ local function injectActor()
             flushReleases(nowS)
 
             -- Mechanics Check
-            if attr.mechanics then
+            if attr.mechanics and attr.ap then
                 local mechanics = fwV.VSRG and fwV.VSRG.Mechanics
                 local actionController = mechanics and mechanics.Action
                 local activeAction = actionController and actionController.ActiveAction
@@ -984,10 +1152,6 @@ local function injectActor()
                     lastMechanicDispatch = 0
                     mechanicCentered = false
                 end
-            else
-                lastMechanicAction = nil
-                lastMechanicDispatch = 0
-                mechanicCentered = false
             end
 
             -- Rhythm Notes Engine
@@ -1005,7 +1169,7 @@ local function injectActor()
                 local playback = gameObj.AdjustedPlayback or 1
                 if playback == 0 then playback = 1 end
 
-                -- Reset on chart changes or playback seek/restart
+                -- Reset on chart change or song seek
                 if lastField ~= field or lastGame ~= gameObj or (tpV and (timepos < tpV - 1.0 or timepos > tpV + 5.0)) then
                     lastField, lastGame, lastNoteCache = field, gameObj, field.NoteCache
                     laneCount, maxLane, zeroBased = 4, 0, false
@@ -1018,11 +1182,33 @@ local function injectActor()
                     ringHead, ringCount = 1, 0
                     accumulatedStrain = 0
                     lastStrainUpdateTime = 0
+                    chartAnalyzedCache = nil
                 elseif lastNoteCache ~= field.NoteCache then
                     lastNoteCache = field.NoteCache
+                    chartAnalyzedCache = nil
                 end
 
                 if timepos ~= tpV then tpV, tpVAt = timepos, nowS end
+
+                -- One-time chart breakdown computation for Watcher
+                if attr.watcherActive and not chartAnalyzedCache then
+                    chartAnalyzedCache = analyzeChart(field, attr.sideName)
+                    if chartAnalyzedCache then
+                        pcall(function()
+                            LP:SetAttribute("GCC_W_TotalNotes", chartAnalyzedCache.totalNotes)
+                            LP:SetAttribute("GCC_W_Duration", chartAnalyzedCache.duration)
+                            LP:SetAttribute("GCC_W_MeanNPS", chartAnalyzedCache.meanNps)
+                            LP:SetAttribute("GCC_W_MeanDeltaMs", chartAnalyzedCache.meanDeltaMs)
+                            LP:SetAttribute("GCC_W_PrimaryTier", chartAnalyzedCache.primaryTier)
+                            LP:SetAttribute("GCC_W_PctNormal", chartAnalyzedCache.pctNormal)
+                            LP:SetAttribute("GCC_W_PctHard", chartAnalyzedCache.pctHard)
+                            LP:SetAttribute("GCC_W_PctInsane", chartAnalyzedCache.pctInsane)
+                            LP:SetAttribute("GCC_W_PctMania", chartAnalyzedCache.pctMania)
+                            LP:SetAttribute("GCC_W_PctLunatic", chartAnalyzedCache.pctLunatic)
+                            LP:SetAttribute("GCC_W_PctImpossible", chartAnalyzedCache.pctImpossible)
+                        end)
+                    end
+                end
 
                 scan.field = field
                 scan.timepos = timepos
@@ -1080,7 +1266,8 @@ local function injectActor()
                     if observed > laneCount and observed <= 9 then laneCount = observed end
                 end
 
-                if lastV and (nowS - lastV) <= 2 then
+                -- Playback hits if Autoplay is active
+                if attr.ap and lastV and (nowS - lastV) <= 2 then
                     if scan.n > 1 then
                         sortPool(scan)
                     end
@@ -1090,6 +1277,20 @@ local function injectActor()
                         hitLane(laneIdx, c.length, scan.holdWindow, nowS)
                         c.arrow._bybyHit = true
                     end
+                end
+
+                -- Synchronize real-time telemetry back to attributes (throttled at 10 Hz)
+                if attr.watcherActive and nowS >= nextTelemetrySyncAt then
+                    nextTelemetrySyncAt = nowS + 0.10
+                    pcall(function()
+                        LP:SetAttribute("GCC_W_RollingNPS", lastComputedRollingNPS)
+                        LP:SetAttribute("GCC_W_PeakNPS", currentPeakNPS)
+                        LP:SetAttribute("GCC_W_Spam", currentSpam)
+                        LP:SetAttribute("GCC_W_Comfort", currentComfort)
+                        LP:SetAttribute("GCC_W_DasCount", dasActivationCount)
+                        LP:SetAttribute("GCC_W_DmbodCount", dmbodTriggerCount)
+                        LP:SetAttribute("GCC_W_MissRate", currentDynamicMissRate)
+                    end)
                 end
             else
                 activeField = nil
@@ -1167,6 +1368,7 @@ end
 
 local uiElements = {}
 
+-- 1. AUTOPLAY TAB
 mainTab:CreateSection({ name = "AUTOPLAY", icon = "eye" })
 
 uiElements.autoplay = mainTab:CreateToggle({
@@ -1431,8 +1633,177 @@ uiElements.mechanicInterval = mainTab:CreateSlider({
     end,
 })
 
--- ------------------------------------------------------------ SETTINGS TAB & CONFIG UI
+-- 2. WATCHER TAB
+watcherTab:CreateSection({ name = "WATCHER CONTROLS", icon = "eye" })
 
+local watcherLabels = {}
+
+uiElements.watcherToggle = watcherTab:CreateToggle({
+    name = "Enable Watcher Monitoring",
+    flag = "Yvetzal_FF_WatcherEnabled",
+    value = State.watcherEnabled,
+    callback = function(v)
+        State.watcherEnabled = v
+        syncFlags()
+    end,
+})
+
+local function resetWatcherUI()
+    pcall(function()
+        if watcherLabels.chartOverview then
+            watcherLabels.chartOverview:Set({
+                Title = "Chart Overview",
+                Content = "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
+            })
+        end
+        if watcherLabels.difficultyBreakdown then
+            watcherLabels.difficultyBreakdown:Set({
+                Title = "Difficulty Profile",
+                Content = "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%",
+            })
+        end
+        if watcherLabels.diagnostics then
+            watcherLabels.diagnostics:Set({
+                Title = "Real-Time Engine Diagnostics",
+                Content = "Density Status: --\nFatigue / Comfort: --\nDynamic Miss Rate: --%\nDAS Activations: --\nDMBOD Triggers: --",
+            })
+        end
+    end)
+end
+
+watcherTab:CreateButton({
+    name = "Clear / Reset Data",
+    callback = function()
+        pcall(function()
+            localPlayer:SetAttribute("GCCWatcherReset", os.clock())
+            localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
+            localPlayer:SetAttribute("GCC_W_Duration", nil)
+            localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
+            localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
+            localPlayer:SetAttribute("GCC_W_PrimaryTier", nil)
+            localPlayer:SetAttribute("GCC_W_PctNormal", nil)
+            localPlayer:SetAttribute("GCC_W_PctHard", nil)
+            localPlayer:SetAttribute("GCC_W_PctInsane", nil)
+            localPlayer:SetAttribute("GCC_W_PctMania", nil)
+            localPlayer:SetAttribute("GCC_W_PctLunatic", nil)
+            localPlayer:SetAttribute("GCC_W_PctImpossible", nil)
+            localPlayer:SetAttribute("GCC_W_RollingNPS", nil)
+            localPlayer:SetAttribute("GCC_W_PeakNPS", nil)
+            localPlayer:SetAttribute("GCC_W_Spam", nil)
+            localPlayer:SetAttribute("GCC_W_Comfort", nil)
+            localPlayer:SetAttribute("GCC_W_DasCount", nil)
+            localPlayer:SetAttribute("GCC_W_DmbodCount", nil)
+            localPlayer:SetAttribute("GCC_W_MissRate", nil)
+        end)
+        resetWatcherUI()
+        window:Notify({
+            title = "Watcher",
+            content = "Telemetry data cleared successfully",
+            icon = iconAsset("crosshair"),
+            duration = 2.5,
+        })
+    end,
+})
+
+watcherTab:CreateSection({ name = "CHART METRICS & AVERAGES", icon = "crosshair" })
+
+watcherLabels.chartOverview = watcherTab:CreateParagraph({
+    Title = "Chart Overview",
+    Content = "Total Notes: --\nChart Duration: -- s\nMean Average NPS: --\nMean Inter-Note Gap: -- ms\nPeak Burst NPS: --\nRolling Dynamic NPS: --",
+})
+
+watcherTab:CreateSection({ name = "DIFFICULTY BREAKDOWN", icon = "palette" })
+
+watcherLabels.difficultyBreakdown = watcherTab:CreateParagraph({
+    Title = "Difficulty Profile",
+    Content = "Primary Tier: --\n\n• Normal: --%\n• Hard: --%\n• Insane: --%\n• Mania: --%\n• Lunatic: --%\n• Impossible: --%",
+})
+
+watcherTab:CreateSection({ name = "ENGINE DIAGNOSTICS (DAS & DMBOD)", icon = "settings" })
+
+watcherLabels.diagnostics = watcherTab:CreateParagraph({
+    Title = "Real-Time Engine Diagnostics",
+    Content = "Density Status: --\nFatigue / Comfort: --\nDynamic Miss Rate: --%\nDAS Activations: --\nDMBOD Triggers: --",
+})
+
+-- UI Telemetry Sync Loop
+task.spawn(function()
+    while isAlive() do
+        task.wait(0.20)
+        if State.watcherEnabled and State.inMatch then
+            pcall(function()
+                local totalNotes = localPlayer:GetAttribute("GCC_W_TotalNotes")
+                local duration = localPlayer:GetAttribute("GCC_W_Duration")
+                local meanNps = localPlayer:GetAttribute("GCC_W_MeanNPS")
+                local meanDelta = localPlayer:GetAttribute("GCC_W_MeanDeltaMs")
+                local rollingNps = localPlayer:GetAttribute("GCC_W_RollingNPS") or 0
+                local peakNps = localPlayer:GetAttribute("GCC_W_PeakNPS") or 0
+
+                local primaryTier = localPlayer:GetAttribute("GCC_W_PrimaryTier") or "--"
+                local pNormal = localPlayer:GetAttribute("GCC_W_PctNormal") or 0
+                local pHard = localPlayer:GetAttribute("GCC_W_PctHard") or 0
+                local pInsane = localPlayer:GetAttribute("GCC_W_PctInsane") or 0
+                local pMania = localPlayer:GetAttribute("GCC_W_PctMania") or 0
+                local pLunatic = localPlayer:GetAttribute("GCC_W_PctLunatic") or 0
+                local pImpossible = localPlayer:GetAttribute("GCC_W_PctImpossible") or 0
+
+                local isSpam = localPlayer:GetAttribute("GCC_W_Spam") == true
+                local comfort = localPlayer:GetAttribute("GCC_W_Comfort") or "COMFORTABLE"
+                local dasCount = localPlayer:GetAttribute("GCC_W_DasCount") or 0
+                local dmbodCount = localPlayer:GetAttribute("GCC_W_DmbodCount") or 0
+                local missRate = localPlayer:GetAttribute("GCC_W_MissRate") or 0
+
+                if watcherLabels.chartOverview then
+                    watcherLabels.chartOverview:Set({
+                        Title = "Chart Overview",
+                        Content = string.format(
+                            "Total Notes: %s\nChart Duration: %s s\nMean Average NPS: %s\nMean Inter-Note Gap: %s ms\nPeak Burst NPS: %.2f\nRolling Dynamic NPS: %.2f",
+                            totalNotes and tostring(totalNotes) or "--",
+                            duration and string.format("%.1f", duration) or "--",
+                            meanNps and string.format("%.2f", meanNps) or "--",
+                            meanDelta and string.format("%.1f", meanDelta) or "--",
+                            peakNps,
+                            rollingNps
+                        ),
+                    })
+                end
+
+                if watcherLabels.difficultyBreakdown then
+                    watcherLabels.difficultyBreakdown:Set({
+                        Title = "Difficulty Profile",
+                        Content = string.format(
+                            "Primary Tier: %s\n\n• Normal (<4 NPS): %.1f%%\n• Hard (4-7 NPS): %.1f%%\n• Insane (7-11 NPS): %.1f%%\n• Mania (11-16 NPS): %.1f%%\n• Lunatic (16-22 NPS): %.1f%%\n• Impossible (>22 NPS): %.1f%%",
+                            primaryTier,
+                            pNormal,
+                            pHard,
+                            pInsane,
+                            pMania,
+                            pLunatic,
+                            pImpossible
+                        ),
+                    })
+                end
+
+                if watcherLabels.diagnostics then
+                    local spamColor = isSpam and "SPAM: TRUE" or "SPAM: FALSE"
+                    watcherLabels.diagnostics:Set({
+                        Title = "Real-Time Engine Diagnostics",
+                        Content = string.format(
+                            "Density Status: %s\nFatigue State: %s\nDynamic Miss Rate: %.2f%%\nDAS Activations (Shaved Sick): %d\nDMBOD Triggers (Dynamic Misses): %d",
+                            spamColor,
+                            tostring(comfort),
+                            missRate,
+                            dasCount,
+                            dmbodCount
+                        ),
+                    })
+                end
+            end)
+        end
+    end
+end)
+
+-- 3. SETTINGS TAB
 settingsTab:CreateSection({ name = "CONFIG MANAGEMENT", icon = "settings" })
 
 local function syncUIWithState()
@@ -1458,6 +1829,7 @@ local function syncUIWithState()
         if uiElements.missCooldown then uiElements.missCooldown:Set(State.missCooldown) end
         if uiElements.holdTime then uiElements.holdTime:Set(math.floor(State.holdTime * 1000)) end
         if uiElements.mechanicInterval then uiElements.mechanicInterval:Set(State.mechanicInterval) end
+        if uiElements.watcherToggle then uiElements.watcherToggle:Set(State.watcherEnabled) end
     end)
 end
 
@@ -1579,6 +1951,26 @@ local function cleanup()
         localPlayer:SetAttribute("GCPenaltyPct", nil)
         localPlayer:SetAttribute("GCCDmbod", nil)
         localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
+        localPlayer:SetAttribute("GCCWatcherActive", nil)
+        localPlayer:SetAttribute("GCCWatcherReset", nil)
+        localPlayer:SetAttribute("GCC_W_TotalNotes", nil)
+        localPlayer:SetAttribute("GCC_W_Duration", nil)
+        localPlayer:SetAttribute("GCC_W_MeanNPS", nil)
+        localPlayer:SetAttribute("GCC_W_MeanDeltaMs", nil)
+        localPlayer:SetAttribute("GCC_W_PrimaryTier", nil)
+        localPlayer:SetAttribute("GCC_W_PctNormal", nil)
+        localPlayer:SetAttribute("GCC_W_PctHard", nil)
+        localPlayer:SetAttribute("GCC_W_PctInsane", nil)
+        localPlayer:SetAttribute("GCC_W_PctMania", nil)
+        localPlayer:SetAttribute("GCC_W_PctLunatic", nil)
+        localPlayer:SetAttribute("GCC_W_PctImpossible", nil)
+        localPlayer:SetAttribute("GCC_W_RollingNPS", nil)
+        localPlayer:SetAttribute("GCC_W_PeakNPS", nil)
+        localPlayer:SetAttribute("GCC_W_Spam", nil)
+        localPlayer:SetAttribute("GCC_W_Comfort", nil)
+        localPlayer:SetAttribute("GCC_W_DasCount", nil)
+        localPlayer:SetAttribute("GCC_W_DmbodCount", nil)
+        localPlayer:SetAttribute("GCC_W_MissRate", nil)
     end)
 
     if shared.YvetzalFunkyFriday == state then
@@ -1606,7 +1998,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Autoplay loaded with DAS v4 & Adaptive DMBOD",
+    content = "Loaded with Watcher Telemetry, DAS v4 & DMBOD",
     icon = iconAsset("crosshair"),
     duration = 4,
 })
