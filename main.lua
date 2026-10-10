@@ -1,4 +1,4 @@
--- Yvetzal: Funky Friday Autoplay (Optimized & Humanized Gaussian Timing)
+-- Yvetzal: Funky Friday Autoplay (Optimized, DAS v2 & DMBOD Dynamic Difficulty)
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -10,7 +10,7 @@ local httpService = game:GetService("HttpService")
 local localPlayer = players.LocalPlayer
 local shared = type(getgenv) == "function" and getgenv() or _G
 
--- Kill any prior instance
+-- Kill prior instance
 if shared.GoodGammingChairCleanup then
     pcall(shared.GoodGammingChairCleanup)
 end
@@ -29,18 +29,22 @@ local DefaultConfig = {
     sideMode = "Auto",
     holdTime = 0.150,
     mechanicInterval = 0.05,
-    sickPct = 90,
-    goodPct = 7,
-    okPct = 3,
+    -- Human Pro Defaults
+    sickPct = 92,
+    goodPct = 6,
+    okPct = 2,
     badPct = 0,
-    missPct = 0,
-    missCooldown = 3.0,
-    sickMaxOffsetMs = 20, -- Tighter bound to prevent bleed into "Good"
-    -- Dynamic Density Scaling
+    missPct = 0, -- Base miss stays 0; DMBOD handles dynamic misses
+    missCooldown = 4.0,
+    sickMaxOffsetMs = 18,
+    -- Dynamic Accuracy Scaling (DAS)
     dynamicAccuracy = true,
-    denseThresholdMs = 35,
-    sparseThresholdMs = 180,
-    strainPenaltyPct = 35,
+    denseThresholdMs = 45,
+    sparseThresholdMs = 240,
+    strainPenaltyPct = 40,
+    -- Dynamic Missing Based on Difficulty (DMBOD)
+    dmbod = true,
+    dmbodMaxMissPct = 5,
 }
 
 local State = {}
@@ -277,7 +281,7 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCSide", State.autoSide)
         localPlayer:SetAttribute("GCCAlive", isAlive())
         localPlayer:SetAttribute("GCCRunId", runId)
-        -- Timing & Accuracy Attributes
+        -- Timing & Accuracy
         localPlayer:SetAttribute("GCCSickPct", State.sickPct)
         localPlayer:SetAttribute("GCCGoodPct", State.goodPct)
         localPlayer:SetAttribute("GCCOkPct", State.okPct)
@@ -285,11 +289,14 @@ local function syncFlags()
         localPlayer:SetAttribute("GCCMissPct", State.missPct)
         localPlayer:SetAttribute("GCCMissCooldown", State.missCooldown)
         localPlayer:SetAttribute("GCCSickMaxOffset", State.sickMaxOffsetMs)
-        -- Dynamic Density Scaling
+        -- Dynamic Accuracy Scaling (DAS)
         localPlayer:SetAttribute("GCCDynAcc", State.dynamicAccuracy)
         localPlayer:SetAttribute("GCDenseMs", State.denseThresholdMs)
         localPlayer:SetAttribute("GCSparseMs", State.sparseThresholdMs)
         localPlayer:SetAttribute("GCPenaltyPct", State.strainPenaltyPct)
+        -- Dynamic Missing Based on Difficulty (DMBOD)
+        localPlayer:SetAttribute("GCCDmbod", State.dmbod)
+        localPlayer:SetAttribute("GCDmbodMaxMiss", State.dmbodMaxMissPct)
     end)
 end
 
@@ -348,15 +355,15 @@ local function injectActor()
         local cachedPendulumPivot
         local nextPendulumRefresh = 0
 
-        -- Accuracy Distribution, Dynamic Density, & Cooldown Cache
-        local cumSick = 90
-        local cumGood = 97
+        -- Accuracy Distribution Cache
+        local cumSick = 92
+        local cumGood = 98
         local cumOk = 100
         local cumBad = 100
         local totalWeight = 100
         local nextMissAllowedAt = 0
 
-        -- Density tracking state
+        -- Density tracking state (zero-allocation)
         local lastGlobalNoteTime = 0
         local lastLaneNoteTime = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
 
@@ -369,17 +376,19 @@ local function injectActor()
             mechanicInterval = tonumber(LP:GetAttribute("GCCMechanicInterval")) or 0.05,
             holdWindow = (tonumber(LP:GetAttribute("GCCHoldMs")) or 150) * 0.001,
             sideName = LP:GetAttribute("GCCSide") or "Left",
-            sickPct = tonumber(LP:GetAttribute("GCCSickPct")) or 90,
-            goodPct = tonumber(LP:GetAttribute("GCCGoodPct")) or 7,
-            okPct = tonumber(LP:GetAttribute("GCCOkPct")) or 3,
+            sickPct = tonumber(LP:GetAttribute("GCCSickPct")) or 92,
+            goodPct = tonumber(LP:GetAttribute("GCCGoodPct")) or 6,
+            okPct = tonumber(LP:GetAttribute("GCCOkPct")) or 2,
             badPct = tonumber(LP:GetAttribute("GCCBadPct")) or 0,
             missPct = tonumber(LP:GetAttribute("GCCMissPct")) or 0,
-            missCooldown = tonumber(LP:GetAttribute("GCCMissCooldown")) or 3.0,
-            sickMaxOffset = (tonumber(LP:GetAttribute("GCCSickMaxOffset")) or 20) * 0.001,
+            missCooldown = tonumber(LP:GetAttribute("GCCMissCooldown")) or 4.0,
+            sickMaxOffset = (tonumber(LP:GetAttribute("GCCSickMaxOffset")) or 18) * 0.001,
             dynAcc = LP:GetAttribute("GCCDynAcc") ~= false,
-            denseMs = tonumber(LP:GetAttribute("GCDenseMs")) or 35,
-            sparseMs = tonumber(LP:GetAttribute("GCSparseMs")) or 180,
-            penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 35,
+            denseMs = tonumber(LP:GetAttribute("GCDenseMs")) or 45,
+            sparseMs = tonumber(LP:GetAttribute("GCSparseMs")) or 240,
+            penaltyPct = tonumber(LP:GetAttribute("GCPenaltyPct")) or 40,
+            dmbod = LP:GetAttribute("GCCDmbod") ~= false,
+            dmbodMaxMiss = tonumber(LP:GetAttribute("GCDmbodMaxMiss")) or 5,
             releaseDirty = false,
         }
 
@@ -427,17 +436,19 @@ local function injectActor()
         trackAttr("GCCMechanicInterval", function(v) attr.mechanicInterval = tonumber(v) or 0.05 end)
         trackAttr("GCCHoldMs", function(v) attr.holdWindow = (tonumber(v) or 150) * 0.001 end)
         trackAttr("GCCSide", function(v) attr.sideName = v or "Left" end)
-        trackAttr("GCCSickPct", function(v) attr.sickPct = tonumber(v) or 90; recalculateWeights() end)
-        trackAttr("GCCGoodPct", function(v) attr.goodPct = tonumber(v) or 7; recalculateWeights() end)
-        trackAttr("GCCOkPct", function(v) attr.okPct = tonumber(v) or 3; recalculateWeights() end)
+        trackAttr("GCCSickPct", function(v) attr.sickPct = tonumber(v) or 92; recalculateWeights() end)
+        trackAttr("GCCGoodPct", function(v) attr.goodPct = tonumber(v) or 6; recalculateWeights() end)
+        trackAttr("GCCOkPct", function(v) attr.okPct = tonumber(v) or 2; recalculateWeights() end)
         trackAttr("GCCBadPct", function(v) attr.badPct = tonumber(v) or 0; recalculateWeights() end)
         trackAttr("GCCMissPct", function(v) attr.missPct = tonumber(v) or 0; recalculateWeights() end)
-        trackAttr("GCCMissCooldown", function(v) attr.missCooldown = tonumber(v) or 3.0 end)
-        trackAttr("GCCSickMaxOffset", function(v) attr.sickMaxOffset = (tonumber(v) or 20) * 0.001 end)
+        trackAttr("GCCMissCooldown", function(v) attr.missCooldown = tonumber(v) or 4.0 end)
+        trackAttr("GCCSickMaxOffset", function(v) attr.sickMaxOffset = (tonumber(v) or 18) * 0.001 end)
         trackAttr("GCCDynAcc", function(v) attr.dynAcc = v ~= false end)
-        trackAttr("GCDenseMs", function(v) attr.denseMs = tonumber(v) or 35 end)
-        trackAttr("GCSparseMs", function(v) attr.sparseMs = tonumber(v) or 180 end)
-        trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 35 end)
+        trackAttr("GCDenseMs", function(v) attr.denseMs = tonumber(v) or 45 end)
+        trackAttr("GCSparseMs", function(v) attr.sparseMs = tonumber(v) or 240 end)
+        trackAttr("GCPenaltyPct", function(v) attr.penaltyPct = tonumber(v) or 40 end)
+        trackAttr("GCCDmbod", function(v) attr.dmbod = v ~= false end)
+        trackAttr("GCDmbodMaxMiss", function(v) attr.dmbodMaxMiss = tonumber(v) or 5 end)
 
         local function getPlayerGui()
             local pg = cachedPlayerGui
@@ -540,11 +551,9 @@ local function injectActor()
             return noteTime - songTime
         end
 
-        -- Human-like Gaussian offset generator (Irwin-Hall n=3, Mean = 0.0)
+        -- Human-like Gaussian offset generator (Irwin-Hall n=3, Mean = 0.0ms)
         local function gaussianOffset(maxWindowSec)
-            -- Sum of 3 uniform randoms approximates a standard normal distribution
             local z = (math_random() + math_random() + math_random() - 1.5) * 1.4142
-            -- Scale so ~99.7% of values fall within [-maxWindowSec, maxWindowSec]
             local offset = z * (maxWindowSec * 0.33)
             return math_clamp(offset, -maxWindowSec, maxWindowSec)
         end
@@ -553,7 +562,6 @@ local function injectActor()
             local adjDiff = diff - (targetOffset or 0)
             local prev = arrow._bybyPrev
             arrow._bybyPrev = adjDiff
-            -- Half-frame window check prevents discrete rendering steps from missing triggers
             local step = dt or 0.016
             local lateWindow = math_min(0.06, math_max(0.02, step * 1.75))
             if adjDiff <= (step * 0.3) and adjDiff >= -lateWindow then return true end
@@ -730,65 +738,85 @@ local function injectActor()
             if not rawTime then return end
             local nTime = (rawTime > 1000 and scan.timepos < 500) and (rawTime * 0.001) or rawTime
 
-            -- Assign offset with Gaussian Sick Distribution & Strain Scaling
+            -- Assign offset with DAS v2 & DMBOD
             if arrow._bybyTargetOffset == nil and not arrow._bybyMiss then
+                -- Inter-note interval strain calculations
                 local deltaGlobal = (lastGlobalNoteTime > 0) and math_abs(nTime - lastGlobalNoteTime) or 1.0
                 local targetLaneIdx = laneFromValue(rawLane, 10)
                 local lastLaneT = (targetLaneIdx and lastLaneNoteTime[targetLaneIdx]) or 0
                 local deltaLane = (lastLaneT > 0) and math_abs(nTime - lastLaneT) or 1.0
-                local dtMs = math_min(deltaGlobal, deltaLane) * 1000
 
+                local dtGlobalMs = deltaGlobal * 1000
+                local dtLaneMs = deltaLane * 1000
+
+                -- Update tracking state
                 lastGlobalNoteTime = nTime
                 if targetLaneIdx and targetLaneIdx >= 1 and targetLaneIdx <= 10 then
                     lastLaneNoteTime[targetLaneIdx] = nTime
                 end
 
-                local curSick = cumSick
-                local curGood = cumGood
-                local curOk = cumOk
-                local curBad = cumBad
-                local curTotal = totalWeight
+                -- Compute stream strain and jack strain
+                local dDense = attr.denseMs
+                local dSparse = attr.sparseMs
+                local range = (dSparse > dDense) and (dSparse - dDense) or 1
 
-                if attr.dynAcc then
-                    local dDense = attr.denseMs
-                    local dSparse = attr.sparseMs
-                    local range = (dSparse > dDense) and (dSparse - dDense) or 1
-                    local alpha = math_clamp(1.0 - ((dtMs - dDense) / range), 0.0, 1.0)
+                local streamStrain = math_clamp(1.0 - ((dtGlobalMs - dDense) / range), 0.0, 1.0)
+                -- Same-lane jacks fatigue fingers faster
+                local jackStrain = (lastLaneT > 0) and math_clamp(1.0 - ((dtLaneMs - (dDense * 1.75)) / range), 0.0, 1.0) or 0.0
+                local effectiveStrain = math_max(streamStrain, jackStrain * 1.25)
 
-                    if alpha > 0 then
-                        local penalty = alpha * (attr.penaltyPct * 0.01)
-                        local wSick = attr.sickPct
-                        local newSick = wSick * (1.0 - penalty)
-                        local shaved = wSick - newSick
-
-                        local wGood = attr.goodPct + (shaved * 0.65)
-                        local wOk = attr.okPct + (shaved * 0.30)
-                        local wBad = attr.badPct + (shaved * 0.05)
-
-                        curSick = newSick
-                        curGood = curSick + wGood
-                        curOk = curGood + wOk
-                        curBad = curOk + wBad
-                        curTotal = curBad + attr.missPct
+                -- Dynamic Missing Based on Difficulty (DMBOD)
+                local currentMissPct = 0
+                if attr.dmbod then
+                    -- If notes are sparse, miss chance is strictly overridden to 0%
+                    if dtGlobalMs >= dSparse then
+                        currentMissPct = 0
+                    else
+                        currentMissPct = effectiveStrain * attr.dmbodMaxMiss
                     end
+                else
+                    currentMissPct = attr.missPct
                 end
 
-                local canMiss = (scan.nowS >= nextMissAllowedAt) and (attr.missPct > 0)
-                local currentMax = canMiss and curTotal or curBad
-                if currentMax <= 0 then currentMax = 100 end
+                -- Dynamic Accuracy Scaling (DAS)
+                local curSick = attr.sickPct
+                local curGood = attr.goodPct
+                local curOk = attr.okPct
+                local curBad = attr.badPct
 
-                local roll = math_random() * currentMax
-                if roll < curSick then
-                    -- Normal distribution with mean 0.0ms tightly clustered inside Sick window
+                if attr.dynAcc and effectiveStrain > 0 then
+                    local penalty = effectiveStrain * (attr.penaltyPct * 0.01)
+                    local shaved = curSick * penalty
+                    curSick = curSick - shaved
+                    curGood = curGood + (shaved * 0.60)
+                    curOk = curOk + (shaved * 0.32)
+                    curBad = curBad + (shaved * 0.08)
+                end
+
+                local cSick = curSick
+                local cGood = cSick + curGood
+                local cOk = cGood + curOk
+                local cBad = cOk + curBad
+                local cTotal = cBad
+
+                -- Cooldown validation
+                local canMiss = (scan.nowS >= nextMissAllowedAt) and (currentMissPct > 0)
+                if canMiss then
+                    cTotal = cBad + currentMissPct
+                end
+                if cTotal <= 0 then cTotal = 100 end
+
+                local roll = math_random() * cTotal
+                if roll < cSick then
                     arrow._bybyTargetOffset = gaussianOffset(attr.sickMaxOffset)
-                elseif roll < curGood then
-                    local ms = math_random(28, 48)
+                elseif roll < cGood then
+                    local ms = math_random(24, 42)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
-                elseif roll < curOk then
-                    local ms = math_random(52, 75)
+                elseif roll < cOk then
+                    local ms = math_random(45, 68)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
-                elseif roll < curBad then
-                    local ms = math_random(80, 110)
+                elseif roll < cBad then
+                    local ms = math_random(72, 98)
                     arrow._bybyTargetOffset = (math_random() > 0.5 and ms or -ms) * 0.001
                 else
                     arrow._bybyMiss = true
@@ -1107,10 +1135,10 @@ uiElements.sideMode = mainTab:CreateDropdown({
     end,
 })
 
-mainTab:CreateSection({ name = "ACCURACY & TIMING", icon = "crosshair" })
+mainTab:CreateSection({ name = "DYNAMIC ACCURACY & DMBOD", icon = "crosshair" })
 
 uiElements.dynamicAccuracy = mainTab:CreateToggle({
-    name = "Dynamic Accuracy Scaling",
+    name = "Dynamic Accuracy Scaling (DAS)",
     flag = "Yvetzal_FF_DynAcc",
     value = State.dynamicAccuracy,
     callback = function(v)
@@ -1119,23 +1147,20 @@ uiElements.dynamicAccuracy = mainTab:CreateToggle({
     end,
 })
 
-uiElements.sickMaxOffsetMs = mainTab:CreateSlider({
-    name = "Sick Max Spread (±ms)",
-    flag = "Yvetzal_FF_SickMaxSpread",
-    range = { 5, 35 },
-    value = State.sickMaxOffsetMs,
-    increment = 1,
-    suffix = " ms",
+uiElements.dmbod = mainTab:CreateToggle({
+    name = "Dynamic Missing (DMBOD)",
+    flag = "Yvetzal_FF_Dmbod",
+    value = State.dmbod,
     callback = function(v)
-        State.sickMaxOffsetMs = v
+        State.dmbod = v
         syncFlags()
     end,
 })
 
 uiElements.denseThresholdMs = mainTab:CreateSlider({
-    name = "Dense Threshold",
+    name = "Dense Threshold (Peak Burst/Spam)",
     flag = "Yvetzal_FF_DenseMs",
-    range = { 10, 75 },
+    range = { 10, 200 },
     value = State.denseThresholdMs,
     increment = 5,
     suffix = " ms",
@@ -1146,14 +1171,27 @@ uiElements.denseThresholdMs = mainTab:CreateSlider({
 })
 
 uiElements.sparseThresholdMs = mainTab:CreateSlider({
-    name = "Sparse Threshold",
+    name = "Sparse Threshold (Easy/Neutral Zone)",
     flag = "Yvetzal_FF_SparseMs",
-    range = { 100, 300 },
+    range = { 100, 500 },
     value = State.sparseThresholdMs,
     increment = 10,
     suffix = " ms",
     callback = function(v)
         State.sparseThresholdMs = v
+        syncFlags()
+    end,
+})
+
+uiElements.dmbodMaxMissPct = mainTab:CreateSlider({
+    name = "DMBOD Max Miss Chance",
+    flag = "Yvetzal_FF_DmbodMaxMiss",
+    range = { 1, 25 },
+    value = State.dmbodMaxMissPct,
+    increment = 1,
+    suffix = " %",
+    callback = function(v)
+        State.dmbodMaxMissPct = v
         syncFlags()
     end,
 })
@@ -1167,6 +1205,21 @@ uiElements.strainPenaltyPct = mainTab:CreateSlider({
     suffix = " %",
     callback = function(v)
         State.strainPenaltyPct = v
+        syncFlags()
+    end,
+})
+
+mainTab:CreateSection({ name = "BASE ACCURACY & TIMING", icon = "palette" })
+
+uiElements.sickMaxOffsetMs = mainTab:CreateSlider({
+    name = "Sick Max Spread (±ms)",
+    flag = "Yvetzal_FF_SickMaxSpread",
+    range = { 5, 30 },
+    value = State.sickMaxOffsetMs,
+    increment = 1,
+    suffix = " ms",
+    callback = function(v)
+        State.sickMaxOffsetMs = v
         syncFlags()
     end,
 })
@@ -1224,7 +1277,7 @@ uiElements.badPct = mainTab:CreateSlider({
 })
 
 uiElements.missPct = mainTab:CreateSlider({
-    name = "Miss Chance",
+    name = "Static Miss Chance (Non-DMBOD)",
     flag = "Yvetzal_FF_MissPct",
     range = { 0, 100 },
     value = State.missPct,
@@ -1286,10 +1339,12 @@ local function syncUIWithState()
         if uiElements.mechanics then uiElements.mechanics:Set(State.mechanics) end
         if uiElements.sideMode then uiElements.sideMode:Set(State.sideMode) end
         if uiElements.dynamicAccuracy then uiElements.dynamicAccuracy:Set(State.dynamicAccuracy) end
-        if uiElements.sickMaxOffsetMs then uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs) end
+        if uiElements.dmbod then uiElements.dmbod:Set(State.dmbod) end
         if uiElements.denseThresholdMs then uiElements.denseThresholdMs:Set(State.denseThresholdMs) end
         if uiElements.sparseThresholdMs then uiElements.sparseThresholdMs:Set(State.sparseThresholdMs) end
+        if uiElements.dmbodMaxMissPct then uiElements.dmbodMaxMissPct:Set(State.dmbodMaxMissPct) end
         if uiElements.strainPenaltyPct then uiElements.strainPenaltyPct:Set(State.strainPenaltyPct) end
+        if uiElements.sickMaxOffsetMs then uiElements.sickMaxOffsetMs:Set(State.sickMaxOffsetMs) end
         if uiElements.sickPct then uiElements.sickPct:Set(State.sickPct) end
         if uiElements.goodPct then uiElements.goodPct:Set(State.goodPct) end
         if uiElements.okPct then uiElements.okPct:Set(State.okPct) end
@@ -1338,7 +1393,7 @@ settingsTab:CreateButton({
 })
 
 settingsTab:CreateButton({
-    name = "Reset to Defaults",
+    name = "Reset to Defaults (Pro 4K Preset)",
     callback = function()
         for k, v in pairs(DefaultConfig) do
             State[k] = v
@@ -1348,7 +1403,7 @@ settingsTab:CreateButton({
         syncFlags()
         window:Notify({
             title = "Configuration",
-            content = "Reset to default settings",
+            content = "Reset to Pro 4K Player defaults",
             icon = iconAsset("settings"),
             duration = 3,
         })
@@ -1415,6 +1470,8 @@ local function cleanup()
         localPlayer:SetAttribute("GCDenseMs", nil)
         localPlayer:SetAttribute("GCSparseMs", nil)
         localPlayer:SetAttribute("GCPenaltyPct", nil)
+        localPlayer:SetAttribute("GCCDmbod", nil)
+        localPlayer:SetAttribute("GCDmbodMaxMiss", nil)
     end)
 
     if shared.YvetzalFunkyFriday == state then
@@ -1442,7 +1499,7 @@ syncFlags()
 
 window:Notify({
     title = "Yvetzal",
-    content = "Autoplay loaded with Humanized Gaussian Timing",
-    icon = iconAsset("eye"),
+    content = "Autoplay loaded with DAS v2 & DMBOD",
+    icon = iconAsset("crosshair"),
     duration = 4,
 })
